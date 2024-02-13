@@ -1,2 +1,2 @@
-# Anonymizer
-Java anonymizer for ELLE
+# Anonymiser
+Java anonymiser for ELLE
