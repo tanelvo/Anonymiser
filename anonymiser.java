@@ -5,26 +5,53 @@ import java.util.regex.Pattern;
 
 public class anonymiser {
 
+    // STRING ARRAY-KS
     public static String[] splitStringIntoArray(String input) {
         // Split the input string into an array of words
         String[] words = input.split("\\s+");
-        String pepu = findFirstInSentence(words);
         return words;
     }
 
-    public static String findFirstInSentence(String[] input) {
-        //String[] info;
-        System.out.println("firstInSentence");
-        List<String> firstInSentence = new ArrayList<>();
+    
+    public static String processText(String[] input) {
+        
+        
         for (int i = 1; i < input.length; i++) {
+            // Nimi?
+
             if(input[i].matches(".*[A-Z].*")){
                 if(input[i-1].endsWith(".")) {
-                    firstInSentence.add(input[i]);
-                    System.out.println(firstInSentence);
+
                 }
             }
         }
         return "info";
+    }
+
+    // ESIMESED SÕNAD LAUSES
+    public static String[] extractFirstWords(String text) {
+        List<String> firstWordsList = new ArrayList<>();
+
+        // Define a regex pattern to match sentence boundaries
+        Pattern pattern = Pattern.compile("(?<=\\.\\s|\\?\\s|!\\s|^)[A-Z0-9][^.!?]*");
+
+        // Create a matcher to find matches in the text
+        Matcher matcher = pattern.matcher(text);
+
+        // Iterate over matches to extract the first word of each sentence
+        while (matcher.find()) {
+            // Get the matched sentence
+            String sentence = matcher.group();
+            // Split the sentence into words and extract the first word
+            String[] words = sentence.split("\\s+");
+            // Add the first word to the list
+            firstWordsList.add(words[0]);
+        }
+
+        // Convert the list to an array
+        String[] firstWordsArray = firstWordsList.toArray(new String[0]);
+
+        return firstWordsArray;
     }
 
     private static final String NAME_REGEX = "\\b[A-Z][a-z]*\\b";
@@ -59,11 +86,16 @@ public class anonymiser {
     }
 
     public static void main(String[] args) {
-        String text = "Kiisu nimega Mirjam Miisu elab aadressil Valge 16, Tallinn. Mirjamile ei meeldi oma naaber Juhan, kes mjäugub liiga valjult. Mirjam on 4 aastane isikukoodiga 62001240838. Mirjamiga saab ühendust võtta numbril +37259108902 või mirjam.miisu@gmail.com.";
-        String[] personalInfo = identifyPersonalInfo(text);
+        String text = "Kiisu nimega Mirjam Miisu elab aadressil Valge 16, Tallinn. Mirjamile ei meeldi oma naaber Juhan, kes mjäugub liiga valjult. Mirjam on 4 aastane isikukoodiga 62001240838. Mirjamiga saab ühendust võtta numbril +37259108902 või mirjam.miisu@gmail.com. 12 kiisut suri korea sõjas! Miks küll nii pidi juhtuma? Miks?! Mirjam sündis 24.07.2002.";
+        //String[] personalInfo = identifyPersonalInfo(text);
 
         String[] textArray = splitStringIntoArray(text);
+
+        String[] firstWords = extractFirstWords(text);
         
+        for (String info : firstWords) {
+            System.out.println(info);
+        }
         // Print the identified personal information
         /* for (String info : personalInfo) {
             System.out.println(info);
