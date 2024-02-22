@@ -1,6 +1,7 @@
 from transformers import BertTokenizer, BertForTokenClassification
 from transformers import pipeline
 from docx import Document
+import string
 
 tokenizer = BertTokenizer.from_pretrained('tartuNLP/EstBERT_NER')
 bertner = BertForTokenClassification.from_pretrained('tartuNLP/EstBERT_NER')
@@ -28,7 +29,7 @@ ner_location = []
 def move_hashtag_words(array):
     i = 0
     while i < len(array) - 1:  # Iterate up to the second-to-last element
-        if array[i+1]['entity'].startswith('I'):
+        if array[i+1]['entity'].startswith('I') or array[i+1]['word'].startswith('#'):
             if array[i+1]['word'].startswith('##'):
                 array[i]['word'] = array[i]['word'] + array[i+1]['word'].strip("#")
             else:
@@ -46,20 +47,31 @@ def categorize(results):
         elif result['entity'] in ['B-LOC', 'I-LOC']:
             ner_location.append(result)
     
+    move_hashtag_words(ner_person)
     move_hashtag_words(ner_organisation)
+    move_hashtag_words(ner_location)
+
+def find_split_index(chunk):
+    for i in range(min(len(chunk), 512) - 1, -1, -1):
+        if chunk[i] in string.whitespace or chunk[i] in string.punctuation:
+            if i < len(chunk) - 1 and chunk[i + 1].isupper():
+                return i + 1
+    return 512
+
     
 
 # Split the text into chunks and process each chunk individually
-max_chunk_length = 512
-
-for i in range(0, len(text), max_chunk_length):
-    chunk = text[i:i + max_chunk_length]
-    chunk = chunk.strip()  # Remove leading and trailing whitespace
-
+start_index = 0
+while start_index < len(text):
+    end_index = find_split_index(text[start_index:])
+    chunk = text[start_index:start_index + end_index].strip()
+    print("--------------")
+    print(chunk)
     # Perform NER on the chunk
     ner_results = nlp(chunk)
-    #print(ner_results)
     categorize(ner_results)
+
+    start_index += end_index
 
 #print("Persons:", ner_person)
 for per in ner_person:
