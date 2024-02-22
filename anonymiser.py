@@ -51,25 +51,36 @@ def categorize(results):
     move_hashtag_words(ner_organisation)
     move_hashtag_words(ner_location)
 
+
 def find_split_index(chunk):
+    # Find the index of the last space or punctuation within the first 512 characters
     for i in range(min(len(chunk), 512) - 1, -1, -1):
         if chunk[i] in string.whitespace or chunk[i] in string.punctuation:
-            if i < len(chunk) - 1 and chunk[i + 1].isupper():
-                return i + 1
+            return i + 1
     return 512
 
     
 
 # Split the text into chunks and process each chunk individually
 start_index = 0
+last_word_capitalized = False
 while start_index < len(text):
     end_index = find_split_index(text[start_index:])
     chunk = text[start_index:start_index + end_index].strip()
-    print("--------------")
+
+    # Ensure last word is not capitalized
+    if last_word_capitalized:
+        last_space_index = chunk.rfind(' ')
+        chunk = chunk[:last_space_index].strip()
+    
+    print("---------------------")
     print(chunk)
     # Perform NER on the chunk
     ner_results = nlp(chunk)
     categorize(ner_results)
+
+    # Check if the last word in the chunk is capitalized
+    last_word_capitalized = chunk.split()[-1][0].isupper()
 
     start_index += end_index
 
