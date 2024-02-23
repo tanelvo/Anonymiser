@@ -2,9 +2,13 @@ from transformers import BertTokenizer, BertForTokenClassification
 from transformers import pipeline
 from docx import Document
 import string
+import re
 
 tokenizer = BertTokenizer.from_pretrained('tartuNLP/EstBERT_NER')
 bertner = BertForTokenClassification.from_pretrained('tartuNLP/EstBERT_NER')
+
+phone_number_pattern = re.compile(r'\b(?:\+\d{1,2}\s?)?\(?\d{1,4}\)?[-.\s]?\d{1,9}[-.\s]?\d{1,9}\b')
+email_address_pattern = re.compile(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b')
 
 nlp = pipeline("ner", model=bertner, tokenizer=tokenizer)
 
@@ -51,7 +55,6 @@ def categorize(results):
     move_hashtag_words(ner_organisation)
     move_hashtag_words(ner_location)
 
-
 def find_split_index(chunk):
     # Find the index of the last space or punctuation within the first 512 characters
     for i in range(min(len(chunk), 512) - 1, -1, -1):
@@ -59,6 +62,8 @@ def find_split_index(chunk):
             return i + 1
     return 512
 
+phone_numbers = re.findall(phone_number_pattern, text)
+email_addresses = re.findall(email_address_pattern, text)
     
 
 # Split the text into chunks and process each chunk individually
@@ -84,6 +89,8 @@ while start_index < len(text):
 
     start_index += end_index
 
+
+
 #print("Persons:", ner_person)
 for per in ner_person:
     print(per)
@@ -93,6 +100,9 @@ for org in ner_organisation:
 print("------------------------------------------------------------")
 for loc in ner_location:
     print(loc)
+
+print("Phone Numbers:", phone_numbers)
+print("Email Addresses:", email_addresses)
 #print("Organisations:", ner_organisation)
 #print("Locations:", ner_location)
 
