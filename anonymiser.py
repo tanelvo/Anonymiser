@@ -1,5 +1,6 @@
 from transformers import BertTokenizer, BertForTokenClassification
 from transformers import pipeline
+from collections import defaultdict
 from docx import Document
 import string
 import re
@@ -32,6 +33,7 @@ ner_location = []
 
 def move_hashtag_words(array):
     i = 0
+    simplifiedArray = []
     while i < len(array) - 1:  # Iterate up to the second-to-last element
         if array[i+1]['entity'].startswith('I') or array[i+1]['word'].startswith('#'):
             if array[i+1]['word'].startswith('##'):
@@ -41,6 +43,13 @@ def move_hashtag_words(array):
             del array[i+1]
         else:
             i += 1  # Move to the next element if no deletion is done
+
+    for element in array:
+        simplifiedArray.append(element['word'])
+    print(simplifiedArray)
+    simplifiedArray = list(dict.fromkeys(simplifiedArray))
+    print(simplifiedArray)
+    return array
 
 def categorize(results):
     for result in results:
@@ -78,12 +87,11 @@ while start_index < len(text):
         last_space_index = chunk.rfind(' ')
         chunk = chunk[:last_space_index].strip()
     
-    print("---------------------")
-    print(chunk)
+    #print("---------------------")
+    #print(chunk)
     # Perform NER on the chunk
     ner_results = nlp(chunk)
     categorize(ner_results)
-
     # Check if the last word in the chunk is capitalized
     last_word_capitalized = chunk.split()[-1][0].isupper()
 
