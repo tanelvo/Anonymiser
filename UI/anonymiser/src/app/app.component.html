@@ -1,0 +1,20 @@
+<div class="file-upload">
+  <input type="file" (change)="onFileSelected($event)" id="file" [multiple]="false" hidden>
+  <textarea [(ngModel)]="userInput" name="text" rows="4" cols="50"></textarea>
+  <label for="file" class="custom-file-input">
+    {{fileToUpload ? fileToUpload.name : 'Choose file'}}
+  </label>
+  <button mat-raised-button color="primary" (click)="onUpload()" [disabled]="!fileToUpload && !userInput">Upload</button>
+  <p>
+    <ng-container  *ngFor="let word of userInput.split(' ')">
+      <span *ngIf="wordsToHighlight.person.includes(word); else normalText"
+            class="highlight" (click)="togglePersonalInfo(word)" [innerHTML]="word"></span>
+      <ng-template #normalText>{{ word }}</ng-template>
+      <span>&nbsp;</span>
+    </ng-container >
+  </p>
+  <h3>Clicked Words:</h3>
+  <ul>
+    <li *ngFor="let info of personalInfo">{{ info }}</li>
+  </ul>
+</div>

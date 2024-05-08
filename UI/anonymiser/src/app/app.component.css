@@ -1,0 +1,26 @@
+.custom-file-input {
+    display: inline-block;
+    padding: 10px 15px;
+    cursor: pointer;
+    background-color: #fff;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    width: calc(100% - 30px);
+    text-overflow: ellipsis;
+    overflow: hidden;
+    white-space: nowrap;
+  }
+  
+  .custom-file-input:hover {
+    background-color: #f0f0f0;
+  }
+  
+  .custom-file-input mat-icon {
+    vertical-align: middle;
+    margin-right: 8px;
+  }
+  
+  .highlight {
+    background-color: yellow;
+    cursor: pointer;
+  }

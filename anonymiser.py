@@ -4,6 +4,7 @@ from collections import defaultdict
 from docx import Document
 import string
 import re
+import numpy as np
 
 tokenizer = BertTokenizer.from_pretrained('tartuNLP/EstBERT_NER')
 bertner = BertForTokenClassification.from_pretrained('tartuNLP/EstBERT_NER')
@@ -23,10 +24,6 @@ class NerResult:
         self.end = end
 
 # Read the content of the Word document
-docx_file_path = './essee.docx'
-doc = Document(docx_file_path)
-text = "\n".join([paragraph.text for paragraph in doc.paragraphs])
-
 ner_person = []
 ner_organisation = []
 ner_location = []
@@ -46,12 +43,11 @@ def move_hashtag_words(array):
 
     for element in array:
         simplifiedArray.append(element['word'])
-    print(simplifiedArray)
     simplifiedArray = list(dict.fromkeys(simplifiedArray))
-    print(simplifiedArray)
     return array
 
 def categorize(results):
+    ner_person, ner_organisation, ner_location = [], [], []
     for result in results:
         if result['entity'] in ['B-PER', 'I-PER']:
             ner_person.append(result)
@@ -59,10 +55,12 @@ def categorize(results):
             ner_organisation.append(result)
         elif result['entity'] in ['B-LOC', 'I-LOC']:
             ner_location.append(result)
+
+    ner_person = move_hashtag_words(ner_person)
+    ner_organisation = move_hashtag_words(ner_organisation)
+    ner_location = move_hashtag_words(ner_location)
+    return ner_person, ner_organisation, ner_location
     
-    move_hashtag_words(ner_person)
-    move_hashtag_words(ner_organisation)
-    move_hashtag_words(ner_location)
 
 def find_split_index(chunk):
     # Find the index of the last space or punctuation within the first 512 characters
@@ -71,46 +69,58 @@ def find_split_index(chunk):
             return i + 1
     return 512
 
-phone_numbers = re.findall(phone_number_pattern, text)
-email_addresses = re.findall(email_address_pattern, text)
+def convert_floats(data):
+    if isinstance(data, dict):
+        return {k: convert_floats(v) for k, v in data.items()}
+    elif isinstance(data, list):
+        return [convert_floats(item) for item in data]
+    elif isinstance(data, np.float32):
+        return float(data)  # Convert numpy float32 to Python float
+    else:
+        return data
     
+def process_document(text):
+    ner_person, ner_organisation, ner_location = [], [], []
+    phone_numbers = re.findall(phone_number_pattern, text)
+    email_addresses = re.findall(email_address_pattern, text)
 
-# Split the text into chunks and process each chunk individually
-start_index = 0
-last_word_capitalized = False
-while start_index < len(text):
-    end_index = find_split_index(text[start_index:])
-    chunk = text[start_index:start_index + end_index].strip()
+    start_index = 0
+    last_word_capitalized = False
+    while start_index < len(text):
+        end_index = find_split_index(text[start_index:])
+        chunk = text[start_index:start_index + end_index].strip()
 
-    # Ensure last word is not capitalized
-    if last_word_capitalized:
-        last_space_index = chunk.rfind(' ')
-        chunk = chunk[:last_space_index].strip()
+        if last_word_capitalized:
+            last_space_index = chunk.rfind(' ')
+            chunk = chunk[:last_space_index].strip()
+
+        ner_results = nlp(chunk)
+        persons, organisations, locations = categorize(ner_results)
+        ner_person.extend(persons)
+        ner_organisation.extend(organisations)
+        ner_location.extend(locations)
+
+        last_word_capitalized = chunk.split()[-1][0].isupper()
+        start_index += end_index
+
+    result = {
+        "person": simplify(ner_person),
+        "organisation": simplify(ner_organisation),
+        "location": simplify(ner_location),
+        "phone_numbers": phone_numbers,
+        "email_addresses": email_addresses
+    }
     
-    #print("---------------------")
-    #print(chunk)
-    # Perform NER on the chunk
-    ner_results = nlp(chunk)
-    categorize(ner_results)
-    # Check if the last word in the chunk is capitalized
-    last_word_capitalized = chunk.split()[-1][0].isupper()
+    return convert_floats(result)
 
-    start_index += end_index
+def simplify(ner_array):
+    array = []
+    for ner in ner_array:
+        print(ner['word'])
+        if ner['word'] not in array:
+            array.append(ner['word'])
+    return array
 
-
-
-#print("Persons:", ner_person)
-for per in ner_person:
-    print(per)
-print("------------------------------------------------------------")
-for org in ner_organisation:
-    print(org)
-print("------------------------------------------------------------")
-for loc in ner_location:
-    print(loc)
-
-print("Phone Numbers:", phone_numbers)
-print("Email Addresses:", email_addresses)
-#print("Organisations:", ner_organisation)
-#print("Locations:", ner_location)
-
+def process_chunk(chunk):
+    # If using transformers' pipeline, specify truncation and max_length
+    return nlp(chunk, truncation=True, max_length=512)
