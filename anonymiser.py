@@ -104,22 +104,44 @@ def process_document(text):
         start_index += end_index
 
     result = {
-        "person": simplify(ner_person),
-        "organisation": simplify(ner_organisation),
-        "location": simplify(ner_location),
+        "person": [],
+        "organisation": [],
+        "location": [],
         "phone_numbers": phone_numbers,
         "email_addresses": email_addresses
     }
-    
+
+    def append_span_info(entity_list, text):
+        print(entity_list)
+        word_array = []
+        for entity in entity_list:
+            word = {
+                'match': entity,
+                'slots': []
+            }
+            pattern = r"\b{}\b".format(re.escape(entity['word']))  # Use re.escape to avoid regex errors
+            print(pattern)
+            matches = re.finditer(pattern, text)
+            for match in matches:
+                print(match.span())
+                word['slots'].append(match.span())
+            word_array.append(word)
+        return word_array
+
+    result['person'] = append_span_info(simplify(ner_person), text)
+    result['organisation'] = append_span_info(simplify(ner_organisation), text)
+    result['location'] = append_span_info(simplify(ner_location), text)
+
     return convert_floats(result)
 
 def simplify(ner_array):
-    array = []
+    # Use a dictionary to track words to avoid duplicates
+    simplified_dict = {}
     for ner in ner_array:
-        print(ner['word'])
-        if ner['word'] not in array:
-            array.append(ner['word'])
-    return array
+        word = ner['word']
+        if word not in simplified_dict:
+            simplified_dict[word] = ner  # Store the whole dictionary
+    return list(simplified_dict.values())  # Return a list of unique dictionaries
 
 def process_chunk(chunk):
     # If using transformers' pipeline, specify truncation and max_length
