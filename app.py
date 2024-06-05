@@ -19,7 +19,9 @@ def file_process():
 
 @app.route('/text/', methods=['POST'])
 def text_process():
-    text = request.json.get('text', '')
+    data = request.json
+    print(data)
+    text = data.get('text', '')
     response_data = process_document(text)
     return jsonify(response_data)
 

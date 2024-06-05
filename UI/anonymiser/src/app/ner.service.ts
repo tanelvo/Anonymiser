@@ -11,7 +11,7 @@ export class NERService {
   constructor(protected httpClient: HttpClient) { }
 
   getNamedEntities(text: string): Observable<Highligtables> {
-    const body = text;
+    const body = {text};
     return this.httpClient.post<Highligtables>('http://localhost:8080/text/', body);
   }
 

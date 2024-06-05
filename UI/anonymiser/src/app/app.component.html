@@ -5,16 +5,25 @@
     {{fileToUpload ? fileToUpload.name : 'Choose file'}}
   </label>
   <button mat-raised-button color="primary" (click)="onUpload()" [disabled]="!fileToUpload && !userInput">Upload</button>
-  <p>
-    <ng-container  *ngFor="let word of userInput.split(' ')">
-      <span *ngIf="wordsToHighlight.person.includes(word); else normalText"
-            class="highlight" (click)="togglePersonalInfo(word)" [innerHTML]="word"></span>
-      <ng-template #normalText>{{ word }}</ng-template>
-      <span>&nbsp;</span>
-    </ng-container >
-  </p>
-  <h3>Clicked Words:</h3>
-  <ul>
-    <li *ngFor="let info of personalInfo">{{ info }}</li>
-  </ul>
+  <div class="wrapper">
+    <div class="text-wrap">
+      <div class="text">
+        <p>
+        <span *ngFor="let part of styledText" 
+              [ngClass]="{'match': part.isMatch}"
+              [ngStyle]="{'background-color': getColor(part)}"
+              (click)="part.isMatch && onMatchClick(part.text)">
+          {{ part.text }}
+        </span>
+      </p>
+      </div>
+    </div>
+    <div class="clicked-wrap">
+      <div class="text">
+        <ul>
+          <li *ngFor="let info of selectedMatches">{{ info }}</li>
+        </ul>
+      </div>
+    </div>
+  </div>
 </div>
