@@ -1,148 +1,94 @@
-from transformers import BertTokenizer, BertForTokenClassification
-from transformers import pipeline
-from collections import defaultdict
-from docx import Document
-import string
-import re
-import numpy as np
+import random
 
-tokenizer = BertTokenizer.from_pretrained('tartuNLP/EstBERT_NER')
-bertner = BertForTokenClassification.from_pretrained('tartuNLP/EstBERT_NER')
+# Define a list of gender-neutral names to use for replacements
+gender_neutral_names = ["Kris", "Renee", "Keit", "Toni", "Kai", "Eike", "Maiki", "Julian", "Karla", "Erli"]
+family_names = ["Ivanov", "Tamm", "Saar", "Sepp", "Mägi", "Smirnov", "Kukk", "Ilves", "Rebane", "Kuusk"]
+locations = ["Kivi", "Lehe", "Pähkli"]
+phone_numbers = ["+37255511111", "+37255522222", "+37255533333"]
+emails = ["anon1@email.com", "anon2@email.com", "anon3@email.com"]
+org_names = ["Firmafy", "Ettevõte OÜ", "AS Firma"]
+id_numbers = ["32345678901", "48765432109", "55555555555"]
 
-phone_number_pattern = re.compile(r'\b(?:\+\d{1,2}\s?)?\(?\d{1,4}\)?[-.\s]?\d{1,9}[-.\s]?\d{1,9}\b')
-email_address_pattern = re.compile(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b')
+def anonymize_text(data):
+    text = data["text"]
+    matches = data["matches"]
+    anonymize = data["anonymize"]
 
-nlp = pipeline("ner", model=bertner, tokenizer=tokenizer)
+    if anonymize == "asterisk":
+        for match in matches:
+            for slot in match["slots"]:
+                start, end = slot
+                # Replace the matched text with asterisks
+                text = text[:start] + '*' * (end - start) + text[end:]
+        return text
 
-class NerResult:
-    def __init__(self, entity, word, score, index, start, end):
-        self.entity = entity
-        self.word = word
-        self.score = score
-        self.index = index
-        self.start = start
-        self.end = end
+    
+    replacements = []
+    for match in matches:
+        match_text = match["match"]
+        custom_replacement = match.get("custom", None)
+        match_type = match["type"]
 
-# Read the content of the Word document
-ner_person = []
-ner_organisation = []
-ner_location = []
-
-def move_hashtag_words(array):
-    i = 0
-    simplifiedArray = []
-    while i < len(array) - 1:  # Iterate up to the second-to-last element
-        if array[i+1]['entity'].startswith('I') or array[i+1]['word'].startswith('#'):
-            if array[i+1]['word'].startswith('##'):
-                array[i]['word'] = array[i]['word'] + array[i+1]['word'].strip("#")
+        # Determine the replacement based on type
+        if match_type == "person":
+            if custom_replacement:
+                replacement_first, replacement_last = custom_replacement.split() if ' ' in custom_replacement else (custom_replacement, "")
             else:
-                array[i]['word'] = array[i]['word'] + ' ' + array[i+1]['word']
-            del array[i+1]
-        else:
-            i += 1  # Move to the next element if no deletion is done
+                replacement_first = random.choice(gender_neutral_names)
+                replacement_last = random.choice(family_names)
 
-    for element in array:
-        simplifiedArray.append(element['word'])
-    simplifiedArray = list(dict.fromkeys(simplifiedArray))
-    return array
+            # Split the match text to handle first and last names
+            match_parts = match_text.split()
+            first_name = match_parts[0]
+            last_name = match_parts[1] if len(match_parts) > 1 else None
+            
+            for slot in match["slots"]:
+                start, end = slot
+                
+                # Determine if the slot corresponds to the full name, first name, or last name
+                if text[start:end] == first_name:  # First name only
+                    replacements.append((start, end, replacement_first))
+                elif last_name and text[start:end] == last_name:  # Last name only
+                    replacements.append((start, end, replacement_last))
+                else:  # Full name
+                    replacements.append((start, start + len(first_name), replacement_first))
+                    replacements.append((start + len(first_name) + 1, end, replacement_last))
+                    
+        elif match_type == "location":
+            replacement = random.choice(locations)
+            for slot in match["slots"]:
+                start, end = slot
+                replacements.append((start, end, replacement))
 
-def categorize(results):
-    ner_person, ner_organisation, ner_location = [], [], []
-    for result in results:
-        if result['entity'] in ['B-PER', 'I-PER']:
-            ner_person.append(result)
-        elif result['entity'] in ['B-ORG', 'I-ORG']:
-            ner_organisation.append(result)
-        elif result['entity'] in ['B-LOC', 'I-LOC']:
-            ner_location.append(result)
+        elif match_type == "email_addresses":
+            replacement = random.choice(emails)
+            for slot in match["slots"]:
+                start, end = slot
+                replacements.append((start, end, replacement))
 
-    ner_person = move_hashtag_words(ner_person)
-    ner_organisation = move_hashtag_words(ner_organisation)
-    ner_location = move_hashtag_words(ner_location)
-    return ner_person, ner_organisation, ner_location
-    
+        elif match_type == "phone_numbers":
+            replacement = random.choice(phone_numbers)
+            for slot in match["slots"]:
+                start, end = slot
+                replacements.append((start, end, replacement))
 
-def find_split_index(chunk):
-    # Find the index of the last space or punctuation within the first 512 characters
-    for i in range(min(len(chunk), 512) - 1, -1, -1):
-        if chunk[i] in string.whitespace or chunk[i] in string.punctuation:
-            return i + 1
-    return 512
+        elif match_type == "id_numbers":
+            replacement = random.choice(id_numbers)
+            for slot in match["slots"]:
+                start, end = slot
+                replacements.append((start, end, replacement))
 
-def convert_floats(data):
-    if isinstance(data, dict):
-        return {k: convert_floats(v) for k, v in data.items()}
-    elif isinstance(data, list):
-        return [convert_floats(item) for item in data]
-    elif isinstance(data, np.float32):
-        return float(data)  # Convert numpy float32 to Python float
-    else:
-        return data
-    
-def process_document(text):
-    ner_person, ner_organisation, ner_location = [], [], []
-    phone_numbers = re.findall(phone_number_pattern, text)
-    email_addresses = re.findall(email_address_pattern, text)
+        elif match_type == "organisation":
+            replacement = random.choice(org_names)
+            for slot in match["slots"]:
+                start, end = slot
+                replacements.append((start, end, replacement))
 
-    start_index = 0
-    last_word_capitalized = False
-    while start_index < len(text):
-        end_index = find_split_index(text[start_index:])
-        chunk = text[start_index:start_index + end_index].strip()
+    # Sort replacements by the start index in descending order to avoid index shifts during replacement
+    replacements = sorted(replacements, key=lambda x: x[0], reverse=True)
 
-        if last_word_capitalized:
-            last_space_index = chunk.rfind(' ')
-            chunk = chunk[:last_space_index].strip()
+    # Replace all occurrences in the text
+    for start, end, replacement in replacements:
+        text = text[:start] + replacement + text[end:]
 
-        ner_results = nlp(chunk)
-        persons, organisations, locations = categorize(ner_results)
-        ner_person.extend(persons)
-        ner_organisation.extend(organisations)
-        ner_location.extend(locations)
-
-        last_word_capitalized = chunk.split()[-1][0].isupper()
-        start_index += end_index
-
-    result = {
-        "person": [],
-        "organisation": [],
-        "location": [],
-        "phone_numbers": phone_numbers,
-        "email_addresses": email_addresses
-    }
-
-    def append_span_info(entity_list, text):
-        print(entity_list)
-        word_array = []
-        for entity in entity_list:
-            word = {
-                'match': entity,
-                'slots': []
-            }
-            pattern = r"\b{}\b".format(re.escape(entity['word']))  # Use re.escape to avoid regex errors
-            print(pattern)
-            matches = re.finditer(pattern, text)
-            for match in matches:
-                print(match.span())
-                word['slots'].append(match.span())
-            word_array.append(word)
-        return word_array
-
-    result['person'] = append_span_info(simplify(ner_person), text)
-    result['organisation'] = append_span_info(simplify(ner_organisation), text)
-    result['location'] = append_span_info(simplify(ner_location), text)
-
-    return convert_floats(result)
-
-def simplify(ner_array):
-    # Use a dictionary to track words to avoid duplicates
-    simplified_dict = {}
-    for ner in ner_array:
-        word = ner['word']
-        if word not in simplified_dict:
-            simplified_dict[word] = ner  # Store the whole dictionary
-    return list(simplified_dict.values())  # Return a list of unique dictionaries
-
-def process_chunk(chunk):
-    # If using transformers' pipeline, specify truncation and max_length
-    return nlp(chunk, truncation=True, max_length=512)
+    return text

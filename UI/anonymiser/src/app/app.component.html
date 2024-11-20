@@ -1,29 +1,80 @@
-<div class="file-upload">
-  <input type="file" (change)="onFileSelected($event)" id="file" [multiple]="false" hidden>
-  <textarea [(ngModel)]="userInput" name="text" rows="4" cols="50"></textarea>
-  <label for="file" class="custom-file-input">
-    {{fileToUpload ? fileToUpload.name : 'Choose file'}}
-  </label>
-  <button mat-raised-button color="primary" (click)="onUpload()" [disabled]="!fileToUpload && !userInput">Upload</button>
-  <div class="wrapper">
-    <div class="text-wrap">
-      <div class="text">
-        <p>
-        <span *ngFor="let part of styledText" 
-              [ngClass]="{'match': part.isMatch}"
-              [ngStyle]="{'background-color': getColor(part)}"
-              (click)="part.isMatch && onMatchClick(part.text)">
-          {{ part.text }}
-        </span>
-      </p>
-      </div>
+<body>
+  <ng-container *ngIf="!anomyizedText">
+    <div class="file-upload">
+      <ng-container *ngIf="processedText.length > 0">
+        <div class="wrapper">
+          <div class="text-wrap">
+            <div class="text">
+              <p>
+                <ng-container *ngFor="let part of processedText">
+                  <span *ngIf="part.normal" [innerHTML]="part.text"></span>
+                  <span *ngIf="!part.normal" 
+                        [ngStyle]="{'cursor': 'pointer', 'background-color': isSelected(part.match) ? part.selected : part.color}"
+                        (click)="selectMatch(part.match)"
+                        [innerHTML]="part.text">
+                  </span>
+                </ng-container>
+              </p>
+            </div>
+          </div>
+          
+          <div class="clicked-wrap">
+            <button mat-raised-button color="primary" class="toggle-button toggle" (click)="toggleAllSelections()">
+              <p>
+                {{ selectedMatches.length === wordsToHighlight.count ? "Eemalda kõik" : "Lisa kõik" }}
+              </p>
+            </button>
+            <div class="table-container">
+              <table class="highlight-table">
+                <tbody>
+                  <ng-container *ngFor="let info of selectedMatches">
+                    <tr [ngStyle]="{'background-color': getHighlightColor(info.match)}">
+                      <td class="info-cell">{{ info.match }}</td>
+                      <td class="remove-button-cell">
+                        <span (click)="removeMatch(info.match)">Eemalda</span>
+                      </td>
+                    </tr>
+                    <tr *ngIf="isCustomizable" [ngStyle]="{'background-color': getHighlightColor(info.match)}">
+                      <td colspan="2">
+                        <input type="text" [(ngModel)]="info.custom"/>
+                      </td>
+                    </tr>
+                  </ng-container>
+                </tbody>
+              </table>
+            </div>
+            <div class="form-container">
+              <input type="checkbox" [(ngModel)]="isCustomizable" /> Kohanda ise nimesid
+              <p>Vali Anonümiseerimise viis:</p>
+              <select [(ngModel)]="anonymizeOption">
+                <option value="words">Võõrandmetega</option>
+                <option value="asterisk">Tärnidega</option>
+              </select>
+              <br/>
+              <button mat-raised-button color="primary" class="toggle-button submit" (click)="submitSelections()">
+                Anonümiseeri
+              </button>
+            </div>
+          </div>
+        </div>
+      </ng-container>
+      
+      <input type="file" (change)="onFileSelected($event)" id="file" [multiple]="false" hidden>
+      <textarea [(ngModel)]="userInput" class="upload-button" name="text" rows="20" cols="150"></textarea>
+      <p class="upload-button">või</p>
+      <label for="file" class="custom-file-input">
+        {{fileToUpload ? fileToUpload.name : 'Vali fail'}}
+      </label>
+      <br/>
+      <button mat-raised-button color="primary" class="upload-button" (click)="onUpload()" [disabled]="!fileToUpload && !userInput">Upload</button>
     </div>
-    <div class="clicked-wrap">
-      <div class="text">
-        <ul>
-          <li *ngFor="let info of selectedMatches">{{ info }}</li>
-        </ul>
-      </div>
+  </ng-container>
+  <ng-container *ngIf="anomyizedText">
+  <div class="text-wrap">
+    <button mat-raised-button color="primary" class="toggle-button toggle" (click)="anomyizedText = ''">Tagasi</button>
+    <div class="text" >
+      <p [innerHTML]="formattedVariable"></p>
     </div>
   </div>
-</div>
+  </ng-container>
+</body>

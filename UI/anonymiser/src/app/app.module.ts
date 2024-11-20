@@ -7,10 +7,12 @@ import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatInputModule } from '@angular/material/input';
 import { MatButtonModule } from '@angular/material/button';
 import { FormsModule } from '@angular/forms';
+import { RemoveLastLetterPipe } from './remove-last-letter.pipe';
 
 @NgModule({
   declarations: [
-    AppComponent
+    AppComponent,
+    RemoveLastLetterPipe
   ],
   imports: [
     BrowserModule,
