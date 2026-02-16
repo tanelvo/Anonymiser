@@ -3,7 +3,6 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 from name_entity_recognizer import process_document
 from anonymiser import anonymize_text
-from estnltk_test import ner_text
 
 app = Flask(__name__)
 CORS(app)

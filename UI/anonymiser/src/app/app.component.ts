@@ -10,6 +10,8 @@ export interface Highligtables {
   phone_numbers: Match[];
   email_addresses: Match[];
   id_numbers: Match[];
+  dates: Match[];
+  addresses: Match[];
   count: number;
 }
 
@@ -34,6 +36,8 @@ export class AppComponent {
     phone_numbers: [],
     email_addresses: [],
     id_numbers: [],
+    dates: [],
+    addresses: [],
     count: 0
   };
   personalInfo: string[] = [];
@@ -85,6 +89,8 @@ export class AppComponent {
       { type: 'phone_numbers', color: '#FFB347', selected: '#FFD580' },
       { type: 'email_addresses', color: '#D885F7', selected: '#E4A9F9' },
       { type: 'id_numbers', color: '#6ec27f', selected: '#92d19f' },
+      { type: 'dates', color: '#8CC6FF', selected: '#B7DCFF' },
+      { type: 'addresses', color: '#FF8FB1', selected: '#FFC2D6' },
     ];
   
     // Adjusted positions due to the added <br> tags

@@ -14,9 +14,29 @@ bertner = BertForTokenClassification.from_pretrained('tartuNLP/EstBERT_NER')
 nlp = pipeline("ner", model=bertner, tokenizer=tokenizer)
 
 # Define regex patterns for phone numbers and email addresses
-phone_number_pattern = re.compile(r'(?:\+?\(?\d{1,3}\)?[-.\s]?)?\(?\d{1,4}\)?[-.\s]?\d{3,4}[-.\s]?\d{3,4}')
+# Phone: allow +country, spaces, and hyphens; avoid dot-separated decimals
+phone_number_pattern = re.compile(
+    r'\b(?:\+?\d{1,3}[\s-]?)?(?:\(?\d{1,4}\)?[\s-]?){1,3}\d{2,4}\b'
+)
 email_address_pattern = re.compile(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b')
 id_number_pattern = re.compile(r'^[1-6]{1}[0-9]{10}$')
+date_pattern = re.compile(
+    r'(?:'
+    r'\b\d{1,2}[./-]\d{1,2}[./-]\d{2,4}\b'
+    r'|\b\d{4}[./-]\d{1,2}[./-]\d{1,2}\b'
+    r'|\b\d{4},\s*\d{1,2}\.\s*(?:jaanuar|veebruar|marts|aprill|mai|juuni|juuli|august|september|oktoober|november|detsember)\b'
+    r'|\b\d{1,2}\.\s*(?:jaanuar|veebruar|marts|aprill|mai|juuni|juuli|august|september|oktoober|november|detsember)\s+\d{4}\b'
+    r'|(?<![A-Za-z0-9])\d{4}(?![A-Za-z0-9])'
+    r')',
+    re.IGNORECASE
+)
+address_pattern = re.compile(
+    r'\b(?:'
+    r'(?:[A-ZÄÖÜÕ][a-zäöüõ]+(?:\s+[A-ZÄÖÜÕ][a-zäöüõ]+)*)\s+'
+    r'(?:tn|tänav|tee|puiestee|pst|maantee|mnt|väljak|plats|allee|põik)\.?\s+\d{1,3}[A-Za-z]?'
+    r'|(?:[A-ZÄÖÜÕ][a-zäöüõ]+(?:\s+[A-ZÄÖÜÕ][a-zäöüõ]+)*)\s+\d{1,3}[A-Za-z]?(?:,\s*[A-ZÄÖÜÕ][a-zäöüõ]+(?:\s+[A-ZÄÖÜÕ][a-zäöüõ]+)*)'
+    r')\b'
+)
 
 class NerResult:
     """
@@ -43,8 +63,11 @@ def process_document(text):
     """
     ner_array = []
     phone_numbers = extract_entity_with_slots(phone_number_pattern, text)
+    phone_numbers = filter_phone_numbers(phone_numbers, text)
     email_addresses = extract_entity_with_slots(email_address_pattern, text)
-    id_numbers = extract_id_numbers_from_phone_numbers(phone_numbers)
+    id_numbers = extract_id_numbers_from_phone_numbers(phone_numbers, text)
+    dates = extract_entity_with_slots(date_pattern, text)
+    addresses = extract_entity_with_slots(address_pattern, text)
 
     start_index = 0
     last_word_capitalized = False
@@ -72,6 +95,8 @@ def process_document(text):
         "phone_numbers": phone_numbers,
         "email_addresses": email_addresses,
         "id_numbers": id_numbers,
+        "dates": dates,
+        "addresses": addresses,
         "count": 0
     }
     print(result['person'])
@@ -102,12 +127,14 @@ def process_document(text):
 
     result['phone_numbers'] = merge_duplicates(result['phone_numbers'])
     result['email_addresses'] = merge_duplicates(result['email_addresses'])
+    result['dates'] = merge_duplicates_normalized(result['dates'], normalize_date_match)
+    result['addresses'] = merge_duplicates(result['addresses'])
     result['person'] = set_longest_match_from_slots(
         remove_smaller_slots(result['person']),
         text
     )
 
-    keys = ['person', 'organisation', 'location', 'phone_numbers', 'email_addresses', 'id_numbers']
+    keys = ['person', 'organisation', 'location', 'phone_numbers', 'email_addresses', 'id_numbers', 'dates', 'addresses']
     result['count'] = sum(len(result[key]) for key in keys)
     return convert_floats(result)
 
@@ -125,6 +152,32 @@ def extract_entity_with_slots(pattern, text):
         entities.append(entity_obj)
     return entities
 
+def filter_phone_numbers(phone_numbers, text):
+    """
+    Filter out numeric formats that look like decimals or thousands separators.
+    """
+    filtered = []
+    for phone in phone_numbers:
+        raw = phone['match']
+        slots = phone.get('slots', [])
+        if slots:
+            start, end = slots[0]
+            if start > 0 and text[start - 1] == '+':
+                phone['match'] = '+' + raw
+                phone['slots'] = [(start - 1, end)]
+                raw = phone['match']
+        if '.' in raw:
+            continue
+        if re.fullmatch(r'\d+\.\d+', raw):
+            continue
+        if re.fullmatch(r'\d{1,3}(?:\.\d{3})+', raw):
+            continue
+        digit_count = len(re.sub(r'\D', '', raw))
+        if digit_count < 7:
+            continue
+        filtered.append(phone)
+    return filtered
+
 def merge_duplicates(entity_list):
     """
     Merge duplicate entities (phone numbers or email addresses) by combining their slots.
@@ -135,6 +188,58 @@ def merge_duplicates(entity_list):
         if key in seen:
             seen[key]['slots'].extend(entity['slots'])
             seen[key]['slots'] = list(set(seen[key]['slots']))  # Remove duplicate slots
+        else:
+            seen[key] = entity
+    return list(seen.values())
+
+def normalize_date_match(match_text):
+    """
+    Normalize date strings to YYYY-MM-DD when possible.
+    """
+    numeric_match = re.match(r'^(\d{1,2})[./-](\d{1,2})[./-](\d{2,4})$', match_text)
+    if numeric_match:
+        day, month, year = numeric_match.groups()
+        if len(year) == 2:
+            year = f"20{year}"
+        return f"{year.zfill(4)}-{month.zfill(2)}-{day.zfill(2)}"
+
+    estonian_months = {
+        "jaanuar": "01",
+        "veebruar": "02",
+        "marts": "03",
+        "aprill": "04",
+        "mai": "05",
+        "juuni": "06",
+        "juuli": "07",
+        "august": "08",
+        "september": "09",
+        "oktoober": "10",
+        "november": "11",
+        "detsember": "12",
+    }
+    words_match = re.match(
+        r'^(\d{1,2})\.\s*([A-Za-zÄÖÜÕäöüõ]+)\s+(\d{4})$',
+        match_text,
+        re.IGNORECASE
+    )
+    if words_match:
+        day, month_name, year = words_match.groups()
+        month = estonian_months.get(month_name.lower())
+        if month:
+            return f"{year.zfill(4)}-{month}-{day.zfill(2)}"
+
+    return match_text
+
+def merge_duplicates_normalized(entity_list, normalizer):
+    """
+    Merge duplicate entities using a normalized key for matching.
+    """
+    seen = {}
+    for entity in entity_list:
+        key = normalizer(entity['match'])
+        if key in seen:
+            seen[key]['slots'].extend(entity['slots'])
+            seen[key]['slots'] = list(set(seen[key]['slots']))
         else:
             seen[key] = entity
     return list(seen.values())
@@ -230,6 +335,16 @@ def find_all_matches(entity_list, text):
     word_array = []
     no_match_array = []
 
+    def is_abbreviated_name(word):
+        """
+        Skip abbreviated names like "J. H" or "J.H.".
+        """
+        tokens = word.replace('.', ' . ').split()
+        letter_tokens = [t for t in tokens if t != '.']
+        if len(letter_tokens) >= 2 and all(len(t) == 1 for t in letter_tokens):
+            return True
+        return False
+
     def is_start_of_sentence(index):
         """Check if the match is at the start of a sentence."""
         if index == 0:
@@ -247,6 +362,8 @@ def find_all_matches(entity_list, text):
 
     if isinstance(entity_list, list):
         for word in entity_list:
+            if is_abbreviated_name(word):
+                continue
             word_obj = {'match': word, 'slots': []}
             fuzzy_matches = find_near_matches(word, text, max_l_dist=1)
             if fuzzy_matches:
@@ -264,6 +381,8 @@ def find_all_matches(entity_list, text):
         # Handle single words with fuzzy matching
         for word in entity_list['singleWord']:
             word_obj = {'match': word, 'slots': []}
+            if is_abbreviated_name(word):
+                continue
             if len(word) == 1:  # Skip single-letter entities
                 continue
 
@@ -282,6 +401,8 @@ def find_all_matches(entity_list, text):
         # Handle grouped multiple words with fuzzy matching
         for group in match_array:
             main_word = group[0]
+            if is_abbreviated_name(main_word):
+                continue
             word_obj = {'match': main_word, 'slots': []}
             for word in group:
                 fuzzy_matches = find_near_matches(word, text, max_l_dist=1)
@@ -404,7 +525,7 @@ def merge_first_last_name(ner_array):
     merged_array = list(first_name_dict.values())
     return merged_array
 
-def extract_id_numbers_from_phone_numbers(phone_numbers):
+def extract_id_numbers_from_phone_numbers(phone_numbers, text):
     """
     Extracts ID numbers from the given phone numbers if they match the ID number regex pattern.
     Skips numbers that start with '+', as they are international phone numbers.
@@ -414,7 +535,16 @@ def extract_id_numbers_from_phone_numbers(phone_numbers):
 
     for phone in phone_numbers:
         phone_number = phone['match']
-        match = re.search(id_number_pattern, phone_number)
+        slots = phone.get('slots', [])
+        if slots:
+            start, _ = slots[0]
+            if start > 0 and text[start - 1] == '+':
+                phone_numbers_to_keep.append(phone)
+                continue
+        if '+' in phone_number:
+            phone_numbers_to_keep.append(phone)
+            continue
+        match = re.fullmatch(id_number_pattern, phone_number)
 
         if match:
             id_numbers.append(phone)  # Add the phone number and its slots to id_numbers
