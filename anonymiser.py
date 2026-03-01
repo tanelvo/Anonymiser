@@ -56,7 +56,7 @@ def anonymize_text(data):
     text = data["text"]
     matches = data["matches"]
     anonymize = data["anonymize"]
-    use_morphology = data.get("use_morphology", True)
+    use_morphology = True
 
     if anonymize == "asterisk":
         for match in matches:
@@ -89,6 +89,8 @@ def anonymize_text(data):
             case_form = None
             if use_morphology:
                 case_form = infer_case_form(match_text)
+            # Log detected case for each person match
+            print(f"[vabamorf] name='{match_text}' case='{case_form}'")
             if case_form and synthesize_with_vabamorf is not None:
                 try:
                     synthesized_first = synthesize_with_vabamorf(replacement_first, case_form)
