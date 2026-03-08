@@ -1,13 +1,8 @@
 import random
 
-try:
-    from morphology import analyze_morphology, synthesize_with_vabamorf
-except Exception:
-    analyze_morphology = None
-    synthesize_with_vabamorf = None
+from name_gender import pick_replacement_first
+from morphology import analyze_morphology, synthesize_with_vabamorf
 
-# Define a list of gender-neutral names to use for replacements
-gender_neutral_names = ["Kris", "Renee", "Keit", "Toni", "Kai", "Eike", "Maiki", "Julian", "Karla", "Erli"]
 family_names = ["Ivanov", "Tamm", "Saar", "Sepp", "Mägi", "Smirnov", "Kukk", "Ilves", "Rebane", "Kuusk"]
 locations = ["Kivi", "Lehe", "Pähkli"]
 phone_numbers = ["+37255511111", "+37255522222", "+37255533333"]
@@ -22,6 +17,7 @@ CASE_TO_VABAMORF = {
     "Gen": "sg g",
     "Par": "sg p",
     "Ill": "sg ill",
+    "Ine": "sg in",
     "Ela": "sg el",
     "All": "sg all",
     "Ade": "sg ad",
@@ -49,14 +45,14 @@ def infer_case_form(text):
     for part in feats.split("|"):
         if part.startswith("Case="):
             case = part.split("=", 1)[1]
-            return CASE_TO_VABAMORF.get(case)
+            vabamorf_case = CASE_TO_VABAMORF.get(case)
+            return vabamorf_case
     return None
 
 def anonymize_text(data):
     text = data["text"]
     matches = data["matches"]
     anonymize = data["anonymize"]
-    use_morphology = True
 
     if anonymize == "asterisk":
         for match in matches:
@@ -75,45 +71,56 @@ def anonymize_text(data):
 
         # Determine the replacement based on type
         if match_type == "person":
+            # Split the match text to handle first and last names
+            match_parts = match_text.split()
+            first_name = match_parts[0] if match_parts else ""
+            last_name = match_parts[1] if len(match_parts) > 1 else None
             if custom_replacement:
                 replacement_first, replacement_last = custom_replacement.split() if ' ' in custom_replacement else (custom_replacement, "")
             else:
-                replacement_first = random.choice(gender_neutral_names)
+                replacement_first = pick_replacement_first(first_name)
                 replacement_last = random.choice(family_names)
 
-            # Split the match text to handle first and last names
-            match_parts = match_text.split()
-            first_name = match_parts[0]
-            last_name = match_parts[1] if len(match_parts) > 1 else None
-
-            case_form = None
-            if use_morphology:
-                case_form = infer_case_form(match_text)
-            # Log detected case for each person match
-            print(f"[vabamorf] name='{match_text}' case='{case_form}'")
-            if case_form and synthesize_with_vabamorf is not None:
-                try:
-                    synthesized_first = synthesize_with_vabamorf(replacement_first, case_form)
-                    if synthesized_first:
-                        replacement_first = synthesized_first[0]
-                    if replacement_last:
-                        synthesized_last = synthesize_with_vabamorf(replacement_last, case_form)
-                        if synthesized_last:
-                            replacement_last = synthesized_last[0]
-                except Exception:
-                    pass
-            
+            has_capitalized_last_name = False
+            if last_name:
+                has_capitalized_last_name = (
+                    last_name[0].isupper()
+                    and len(last_name) > 1
+                    and last_name[1:].islower()
+                )
             for slot in match["slots"]:
                 start, end = slot
+                slot_text = text[start:end]
+                slot_first = replacement_first
+                slot_last = replacement_last
+                case_form = infer_case_form(slot_text)
+                print("========================================")
+                print(f"[vabamorf] source='{slot_text}' case='{case_form}'")
+                if case_form and synthesize_with_vabamorf is not None:
+                    try:
+                        synthesized_first = synthesize_with_vabamorf(replacement_first, case_form)
+                        if synthesized_first:
+                            slot_first = synthesized_first[0]
+                        if replacement_last:
+                            synthesized_last = synthesize_with_vabamorf(replacement_last, case_form)
+                            if synthesized_last:
+                                slot_last = synthesized_last[0]
+                        print(f"[vabamorf] nom='{replacement_first} {replacement_last}'. case='{case_form}'. inflected='{slot_first} {slot_last}'")
+                    except Exception:
+                        pass
                 
                 # Determine if the slot corresponds to the full name, first name, or last name
-                if text[start:end] == first_name:  # First name only
-                    replacements.append((start, end, replacement_first))
-                elif last_name and text[start:end] == last_name:  # Last name only
-                    replacements.append((start, end, replacement_last))
-                else:  # Full name
-                    replacements.append((start, start + len(first_name), replacement_first))
-                    replacements.append((start + len(first_name) + 1, end, replacement_last))
+                if " " not in slot_text:
+                    # Single-token slot (often inflected) -> replace whole token
+                    replacements.append((start, end, slot_first))
+                elif slot_text == first_name:  # First name only
+                    replacements.append((start, end, slot_first))
+                elif last_name and has_capitalized_last_name and slot_text == last_name:  # Last name only
+                    replacements.append((start, end, slot_last))
+                else:  # Full name with space
+                    replacements.append((start, start + len(first_name), slot_first))
+                    if last_name and has_capitalized_last_name:
+                        replacements.append((start + len(first_name) + 1, end, slot_last))
                     
         elif match_type == "location":
             replacement = random.choice(locations)
@@ -170,4 +177,5 @@ def anonymize_text(data):
     for start, end, replacement in replacements:
         text = text[:start] + replacement + text[end:]
 
+    print(f"[anonymized] {text}")
     return text

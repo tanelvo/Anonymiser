@@ -3,10 +3,16 @@ from fuzzysearch import find_near_matches
 from transformers import BertTokenizer, BertForTokenClassification
 from transformers import pipeline
 from collections import defaultdict
-from docx import Document
+from morphology import to_nominative
 import string
 import re
 import numpy as np
+import requests
+
+_KNOWN_PERSON_CACHE = {}
+_WIKIDATA_HEADERS = {
+    "User-Agent": "Anonymiser/1.0 (contact: you@example.com)"
+}
 
 # Load pre-trained BERT tokenizer and model for NER (Estonian model)
 tokenizer = BertTokenizer.from_pretrained('tartuNLP/EstBERT_NER')
@@ -20,16 +26,6 @@ phone_number_pattern = re.compile(
 )
 email_address_pattern = re.compile(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b')
 id_number_pattern = re.compile(r'^[1-6]{1}[0-9]{10}$')
-date_pattern = re.compile(
-    r'(?:'
-    r'\b\d{1,2}[./-]\d{1,2}[./-]\d{2,4}\b'
-    r'|\b\d{4}[./-]\d{1,2}[./-]\d{1,2}\b'
-    r'|\b\d{4},\s*\d{1,2}\.\s*(?:jaanuar|veebruar|marts|aprill|mai|juuni|juuli|august|september|oktoober|november|detsember)\b'
-    r'|\b\d{1,2}\.\s*(?:jaanuar|veebruar|marts|aprill|mai|juuni|juuli|august|september|oktoober|november|detsember)\s+\d{4}\b'
-    r'|(?<![A-Za-z0-9])\d{4}(?![A-Za-z0-9])'
-    r')',
-    re.IGNORECASE
-)
 address_pattern = re.compile(
     r'\b(?:'
     r'(?:[A-ZÄÖÜÕ][a-zäöüõ]+(?:\s+[A-ZÄÖÜÕ][a-zäöüõ]+)*)\s+'
@@ -66,7 +62,6 @@ def process_document(text):
     phone_numbers = filter_phone_numbers(phone_numbers, text)
     email_addresses = extract_entity_with_slots(email_address_pattern, text)
     id_numbers = extract_id_numbers_from_phone_numbers(phone_numbers, text)
-    dates = extract_entity_with_slots(date_pattern, text)
     addresses = extract_entity_with_slots(address_pattern, text)
 
     start_index = 0
@@ -95,21 +90,21 @@ def process_document(text):
         "phone_numbers": phone_numbers,
         "email_addresses": email_addresses,
         "id_numbers": id_numbers,
-        "dates": dates,
+        "dates": [],
         "addresses": addresses,
         "count": 0
     }
-    print(result['person'])
+    print("========================================")
     # Find matches for persons, organizations, and locations in the text
     print(result['person'])
-    result['person'], per_no_match = find_all_matches(ner_person, text)
-    result['organisation'], org_no_match = find_all_matches(ner_organisation, text)
-    result['location'], loc_no_match = find_all_matches(ner_location, text)
+    result['person'], per_no_match = find_all_matches(ner_person, text, entity_type="person")
+    result['organisation'], org_no_match = find_all_matches(ner_organisation, text, entity_type="organisation")
+    result['location'], loc_no_match = find_all_matches(ner_location, text, entity_type="location")
 
     # Attempt to match unmatched organizations and resolve overlaps
-    per_no_match = find_all_matches(match_no_match_strings(text, per_no_match), text)[0]
-    org_no_match = find_all_matches(match_no_match_strings(text, org_no_match), text)[0]
-    loc_no_match = find_all_matches(match_no_match_strings(text, loc_no_match), text)[0]
+    per_no_match = find_all_matches(match_no_match_strings(text, per_no_match, entity_type="person"), text, entity_type="person")[0]
+    org_no_match = find_all_matches(match_no_match_strings(text, org_no_match, entity_type="organisation"), text, entity_type="organisation")[0]
+    loc_no_match = find_all_matches(match_no_match_strings(text, loc_no_match, entity_type="location"), text, entity_type="location")[0]
 
     result['person'] = remove_overlapping_slots(result['person'], per_no_match)
     result['organisation'] = remove_overlapping_slots(result['organisation'], org_no_match)
@@ -127,22 +122,251 @@ def process_document(text):
 
     result['phone_numbers'] = merge_duplicates(result['phone_numbers'])
     result['email_addresses'] = merge_duplicates(result['email_addresses'])
-    result['dates'] = merge_duplicates_normalized(result['dates'], normalize_date_match)
+    result['dates'] = []
     result['addresses'] = merge_duplicates(result['addresses'])
     result['person'] = set_longest_match_from_slots(
         remove_smaller_slots(result['person']),
         text
     )
+    result['person'] = merge_adjacent_person_names(result['person'], text)
+    result['person'] = normalize_person_matches(result['person'])
+    result['person'] = filter_known_persons(result['person'])
 
-    keys = ['person', 'organisation', 'location', 'phone_numbers', 'email_addresses', 'id_numbers', 'dates', 'addresses']
+    keys = ['person', 'organisation', 'location', 'phone_numbers', 'email_addresses', 'id_numbers', 'addresses']
     result['count'] = sum(len(result[key]) for key in keys)
+    print("========================================")
+    print(f"[matches] person={result['person']}")
+    print(f"[matches] organisation={result['organisation']}")
+    print(f"[matches] location={result['location']}")
+    print(f"[matches] phone_numbers={result['phone_numbers']}")
+    print(f"[matches] email_addresses={result['email_addresses']}")
+    print(f"[matches] id_numbers={result['id_numbers']}")
+    print(f"[matches] addresses={result['addresses']}")
     return convert_floats(result)
+
+
+def normalize_person_matches(person_array):
+    """
+    Normalize person match strings to nominative and merge slots for duplicates.
+    """
+    if not person_array:
+        return person_array
+    if to_nominative is None:
+        return person_array
+
+    merged = {}
+    print("========================================")
+    for match in person_array:
+        raw = match.get("match", "")
+        nom = to_nominative(raw) or raw
+        print(f"[nominative] raw='{raw}' nom='{nom}'")
+        if nom.lower() == raw.lower():
+            nom = raw
+        elif len(raw.split()) == 1:
+            nom = nom[:1].upper() + nom[1:]
+        if len(nom.split()) < len(raw.split()):
+            nom = raw
+        if nom in merged:
+            merged[nom]["slots"].extend(match.get("slots", []))
+        else:
+            merged[nom] = {"match": nom, "slots": list(match.get("slots", []))}
+
+    # de-dup slots
+    for obj in merged.values():
+        obj["slots"] = list(set(obj["slots"]))
+
+    return list(merged.values())
+
+
+def merge_adjacent_person_names(person_array, text):
+    """
+    Merge adjacent person names like "Mart" + "Sander" into "Mart Sander".
+    """
+    if not person_array:
+        return person_array
+
+    # Build a flat list of slot entries
+    entries = []
+    for person in person_array:
+        for slot in person.get("slots", []):
+            entries.append({"match": person.get("match", ""), "slot": slot})
+
+    entries.sort(key=lambda e: e["slot"][0])
+    merged = []
+    i = 0
+    while i < len(entries):
+        curr = entries[i]
+        start, end = curr["slot"]
+        curr_text = text[start:end]
+        merged_text = curr_text
+        merged_start, merged_end = start, end
+        j = i + 1
+        while j < len(entries):
+            next_start, next_end = entries[j]["slot"]
+            if next_start == merged_end + 1 and text[merged_end:next_start] == " ":
+                next_text = text[next_start:next_end]
+                merged_text = merged_text + " " + next_text
+                merged_end = next_end
+                j += 1
+            else:
+                break
+        merged.append({"match": merged_text, "slots": [(merged_start, merged_end)]})
+        i = j
+
+    return merged
+
+
+
+
+def filter_known_persons(person_array):
+    """
+    Remove person matches that are confirmed as known people via Wikidata.
+    Only checks names with at least two tokens (first + last).
+    """
+    if not person_array:
+        return person_array
+
+    known_slots = []
+    known_single_tokens = set()
+    filtered = []
+    print("========================================")
+    for match in person_array:
+        name = (match.get("match") or "").strip()
+        if not name or len(name.split()) < 2:
+            continue
+        if is_known_person(name):
+            known_slots.extend(match.get("slots", []))
+            for token in name.split():
+                known_single_tokens.add(token.lower())
+        else:
+            filtered.append(match)
+
+    if not known_slots:
+        # keep original single-name entries if no known full names
+        for match in person_array:
+            name = (match.get("match") or "").strip()
+            if name and len(name.split()) < 2:
+                filtered.append(match)
+        return filtered
+
+    def overlaps(slot1, slot2):
+        return not (slot1[1] <= slot2[0] or slot2[1] <= slot1[0])
+
+    # Remove single-name matches that overlap known full-name slots
+    for match in person_array:
+        name = (match.get("match") or "").strip()
+        if not name or len(name.split()) >= 2:
+            continue
+        slots = match.get("slots", [])
+        name_key = name.lower()
+        if to_nominative is not None:
+            try:
+                name_key = (to_nominative(name) or name).lower()
+            except Exception:
+                name_key = name.lower()
+        if name_key in known_single_tokens:
+            continue
+        # If a known full-name token is a prefix and the remainder is a case suffix, drop it
+        case_suffixes = {
+            "i", "ile", "ilt", "ist", "iga", "iks",
+            "lt", "st", "ga", "na", "ni", "ta", "l", "s"
+        }
+        for token in known_single_tokens:
+            if name_key.startswith(token):
+                rest = name_key[len(token):]
+                if rest in case_suffixes:
+                    continue
+        if any(name_key.startswith(t) and name_key[len(t):] in case_suffixes for t in known_single_tokens):
+            continue
+        if any(overlaps(slot, known) for slot in slots for known in known_slots):
+            continue
+        filtered.append(match)
+
+    return filtered
+
+
+def is_known_person(name):
+    """
+    Return True if Wikidata confirms this name as a human (Q5).
+    Uses a small in-memory cache and fails open (False) on errors.
+    """
+    print(f"[wikidata] check name='{name}'")
+    key = name.lower().strip()
+    if key in _KNOWN_PERSON_CACHE:
+        return _KNOWN_PERSON_CACHE[key]
+
+    try:
+        search_params = {
+            "action": "wbsearchentities",
+            "search": name,
+            "language": "et",
+            "format": "json",
+            "limit": 3,
+            "type": "item",
+        }
+        search_resp = requests.get(
+            "https://www.wikidata.org/w/api.php",
+            params=search_params,
+            headers=_WIKIDATA_HEADERS,
+            timeout=3
+        )
+        search_resp.raise_for_status()
+        search_data = search_resp.json()
+        results = search_data.get("search", [])
+        for item in results:
+            qid = item.get("id")
+            if not qid:
+                continue
+            if _wikidata_is_human(qid):
+                _KNOWN_PERSON_CACHE[key] = True
+                return True
+    except Exception as exc:
+        print("========================================")
+        print(f"[wikidata] error for '{name}': {exc}")
+        _KNOWN_PERSON_CACHE[key] = False
+        return False
+
+    _KNOWN_PERSON_CACHE[key] = False
+    return False
+
+
+def _wikidata_is_human(qid):
+    """
+    Check if Wikidata entity has P31 (instance of) Q5 (human).
+    """
+    try:
+        params = {
+            "action": "wbgetentities",
+            "ids": qid,
+            "props": "claims",
+            "format": "json",
+        }
+        resp = requests.get(
+            "https://www.wikidata.org/w/api.php",
+            params=params,
+            headers=_WIKIDATA_HEADERS,
+            timeout=3
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        entity = data.get("entities", {}).get(qid, {})
+        claims = entity.get("claims", {})
+        for claim in claims.get("P31", []):
+            mainsnak = claim.get("mainsnak", {})
+            datavalue = mainsnak.get("datavalue", {})
+            value = datavalue.get("value", {})
+            if isinstance(value, dict) and value.get("id") == "Q5":
+                return True
+    except Exception:
+        return False
+    return False
 
 def extract_entity_with_slots(pattern, text):
     """
     Extract entities like phone numbers or email addresses with their corresponding text slots.
     """
     entities = []
+    print("========================================")
     for match in re.finditer(pattern, text):
         print(match)
         entity_obj = {
@@ -251,19 +475,24 @@ def categorize(results):
     """
     ner_person, ner_organisation, ner_location = [], [], []
 
+    print("========================================")
     for result in results:
         if result['entity'] in ['B-PER', 'I-PER']:
             print(result)
-            ner_person.append({'entity': result['entity'], 'word': result['word']})
+            ner_person.append({'entity': result['entity'], 'word': result['word'], 'start': result.get('start'), 'end': result.get('end')})
         elif result['entity'] in ['B-ORG', 'I-ORG']:
-            ner_organisation.append({'entity': result['entity'], 'word': result['word']})
+            ner_organisation.append({'entity': result['entity'], 'word': result['word'], 'start': result.get('start'), 'end': result.get('end')})
         elif result['entity'] in ['B-LOC', 'I-LOC']:
-            ner_location.append({'entity': result['entity'], 'word': result['word']})
+            ner_location.append({'entity': result['entity'], 'word': result['word'], 'start': result.get('start'), 'end': result.get('end')})
 
     # Handle BERT subword tokens and group them properly
     ner_person = move_hashtag_words(ner_person)
     ner_organisation = move_hashtag_words(ner_organisation)
     ner_location = move_hashtag_words(ner_location)
+    print("========================================")
+    print(f"[categorize] person={ner_person}")
+    print(f"[categorize] organisation={ner_organisation}")
+    print(f"[categorize] location={ner_location}")
     return ner_person, ner_organisation, ner_location
 
 def move_hashtag_words(array):
@@ -278,17 +507,25 @@ def move_hashtag_words(array):
     while i < len(array) - 1:
         next_word = array[i + 1]['word']
         next_entity = array[i + 1]['entity']
+        next_start = array[i + 1].get('start')
+        curr_end = array[i].get('end')
+        adjacent = False
+        if curr_end is not None and next_start is not None:
+            adjacent = next_start <= curr_end + 1
 
         # Check if the next word is part of the same entity
-        if next_entity.startswith('I') or next_word.startswith('##'):
+        if (next_entity.startswith('I') or next_word.startswith('##')) and adjacent:
             if next_word == '.':  # Concatenate if next word is a period
                 array[i]['word'] += next_word
+                array[i]['end'] = array[i + 1].get('end', array[i].get('end'))
                 del array[i + 1]
             elif next_word.startswith('##'):  # Handle subwords (BERT output tokens)
                 array[i]['word'] += next_word[2:]  # Remove ## prefix
+                array[i]['end'] = array[i + 1].get('end', array[i].get('end'))
                 del array[i + 1]
             else:
                 array[i]['word'] += ' ' + next_word  # Normal concatenation
+                array[i]['end'] = array[i + 1].get('end', array[i].get('end'))
                 del array[i + 1]
         else:
             i += 1
@@ -331,7 +568,27 @@ def convert_floats(data):
     else:
         return data
 
-def find_all_matches(entity_list, text):
+PERSON_MIN_LEN = 3
+PERSON_STOPWORDS = {
+    "de", "di", "da", "la", "le", "el", "van", "von", "der", "den", "del",
+    "della", "du", "des", "dos", "das", "san", "st", "saint"
+}
+
+
+def is_plausible_person_token(word):
+    stripped = word.replace("#", "").strip()
+    if len(stripped) < PERSON_MIN_LEN:
+        return False
+    if stripped.lower() in PERSON_STOPWORDS:
+        return False
+    if not any(ch.isalpha() for ch in stripped):
+        return False
+    if stripped.islower():
+        return False
+    return True
+
+
+def find_all_matches(entity_list, text, entity_type=None):
     word_array = []
     no_match_array = []
 
@@ -362,6 +619,8 @@ def find_all_matches(entity_list, text):
 
     if isinstance(entity_list, list):
         for word in entity_list:
+            if entity_type == "person" and not is_plausible_person_token(word):
+                continue
             if is_abbreviated_name(word):
                 continue
             word_obj = {'match': word, 'slots': []}
@@ -385,31 +644,50 @@ def find_all_matches(entity_list, text):
                 continue
             if len(word) == 1:  # Skip single-letter entities
                 continue
+            if entity_type == "person" and not is_plausible_person_token(word):
+                continue
 
-            pattern = re.escape(word) + r'\w*'
+            allow_suffix = True
+            if entity_type == "person" and word.islower():
+                allow_suffix = False
+            if allow_suffix:
+                pattern = r'\b' + re.escape(word) + r'(?:[A-Za-zÄÖÜÕäöüõšž]{1,6})?\b'
+            else:
+                pattern = r'\b' + re.escape(word) + r'\b'
             matches = list(re.finditer(pattern, text))
             if not matches:
                 no_match_array.append(word)
             else:
                 for match in matches:
                     span = match.span()
-                    if not is_start_of_sentence(span[0]):
-                        add_match(word_obj, span)
+                    add_match(word_obj, span)
                 if word_obj['slots']:
                     word_array.append(word_obj)
 
         # Handle grouped multiple words with fuzzy matching
         for group in match_array:
             main_word = group[0]
+            if entity_type == "person" and not is_plausible_person_token(main_word):
+                continue
             if is_abbreviated_name(main_word):
                 continue
             word_obj = {'match': main_word, 'slots': []}
+            strict_phrase = False
+            if entity_type == "person":
+                tokens = [t for t in main_word.split() if t]
+                strict_phrase = any(len(t) < PERSON_MIN_LEN for t in tokens)
             for word in group:
-                fuzzy_matches = find_near_matches(word, text, max_l_dist=1)
-                if fuzzy_matches:
-                    for match in fuzzy_matches:
-                        span = (match.start, match.end)
+                if strict_phrase:
+                    pattern = r'\b' + re.escape(word) + r'\b'
+                    for match in re.finditer(pattern, text):
+                        span = match.span()
                         add_match(word_obj, span)
+                else:
+                    fuzzy_matches = find_near_matches(word, text, max_l_dist=1)
+                    if fuzzy_matches:
+                        for match in fuzzy_matches:
+                            span = (match.start, match.end)
+                            add_match(word_obj, span)
             if not word_obj['slots']:
                 no_match_array.append(main_word)
             else:
@@ -456,7 +734,7 @@ def group_similar_strings(strings, threshold=0.8):
     
     return groups
 
-def match_no_match_strings(text, no_match_array):
+def match_no_match_strings(text, no_match_array, entity_type=None):
     """
     Try to match unmatched strings with capitalized words in the text using similarity comparison.
     """
@@ -471,6 +749,8 @@ def match_no_match_strings(text, no_match_array):
     recovered_matches = []
 
     for string in no_match_array:
+        if entity_type == "person" and not is_plausible_person_token(string):
+            continue
         words = string.split()
 
         for i, cap_word in enumerate(capitalized_words):

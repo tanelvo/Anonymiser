@@ -45,13 +45,13 @@ def file_process():
     doc = Document(file)
     text = "\n".join([paragraph.text.replace('\r', '\n') for paragraph in doc.paragraphs])
     response_data = process_document(text)
-    print(response_data)
     return jsonify(response_data)
 
 
 @app.route('/text/', methods=['POST'])
 def text_process():
     data = request.json
+    print("========================================")
     print(data)
     text = data.get('text', '')
     response_data = process_document(text)
@@ -60,7 +60,6 @@ def text_process():
 @app.route('/anonymise/', methods=['POST'])
 def anonymize():
     text = anonymize_text(request.json)
-    print(text)
     return jsonify(text)
     
 if __name__ == '__main__':

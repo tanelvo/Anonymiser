@@ -1,4 +1,6 @@
 import importlib
+from estnltk import Text
+from estnltk.taggers import VabamorfTagger
 
 
 # Map Vabamorf form tags to Estonian case names used by anonymiser.py
@@ -38,17 +40,19 @@ def _get_morph_layer(text_obj):
     """
     Try tagging the text with Vabamorf via EstNLTK and return the morph layer.
     """
-    try:
-        from estnltk.taggers import VabamorfTagger
-        VabamorfTagger().tag(text_obj)
-        if "morph_analysis" in text_obj.layers:
-            return text_obj["morph_analysis"]
-    except Exception:
-        pass
+    if VabamorfTagger is not None:
+        try:
+            VabamorfTagger().tag(text_obj)
+            if "morph_analysis" in text_obj.layers:
+                return text_obj["morph_analysis"]
+        except Exception:
+            pass
 
     try:
         text_obj.tag_layer(["morph_analysis"])
+        print(text_obj.tag_layer(["morph_analysis"]))
         if "morph_analysis" in text_obj.layers:
+            print(text_obj["morph_analysis"])
             return text_obj["morph_analysis"]
     except Exception:
         pass
@@ -63,10 +67,8 @@ def analyze_morphology(text):
     if not text:
         return []
 
-    try:
-        from estnltk import Text
-    except Exception as exc:
-        raise ImportError("estnltk is required for morphology analysis") from exc
+    if Text is None:
+        raise ImportError("estnltk is required for morphology analysis")
 
     text_obj = Text(text)
     morph_layer = _get_morph_layer(text_obj)
@@ -97,8 +99,57 @@ def analyze_morphology(text):
             analyses.append({"feats": f"Case={case}"})
 
     # Log raw forms and derived cases for debugging
+    print("========================================")
     print(f"[morphology] text='{text}' analyses={analyses}")
     return analyses
+
+
+def to_nominative(text):
+    """
+    Best-effort conversion of a name to nominative using EstNLTK morphology.
+    If analysis is unavailable, returns the original text.
+    """
+    if not text:
+        return text
+
+    try:
+        text_obj = Text(text)
+        morph_layer = _get_morph_layer(text_obj)
+        if morph_layer is None:
+            return text
+        if "words" not in text_obj.layers:
+            text_obj.tag_layer(["words"])
+        words_layer = text_obj["words"]
+    except Exception:
+        return text
+
+    if len(morph_layer) != len(words_layer):
+        return text
+
+    tokens = []
+    for i, word in enumerate(words_layer):
+        lemma = None
+        span = morph_layer[i]
+        ann = None
+        if hasattr(span, "annotations") and span.annotations:
+            ann = span.annotations[0]
+        elif hasattr(span, "analysis") and span.analysis:
+            ann = span.analysis[0]
+        elif isinstance(span, dict):
+            ann = span
+
+        if isinstance(ann, dict):
+            lemma = ann.get("lemma") or ann.get("root")
+            if not lemma and ann.get("root_tokens"):
+                lemma = ann.get("root_tokens")[0]
+        else:
+            lemma = getattr(ann, "lemma", None)
+
+        tokens.append(lemma or word.text)
+
+    return " ".join(tokens)
+
+
 
 
 def _load_synthesizers():
@@ -111,19 +162,13 @@ def _load_synthesizers():
         func = getattr(mod, "synthesize", None)
         if callable(func):
             synthesizers.append(func)
-
-    try:
-        from estnltk.vabamorf import Vabamorf
-        synthesizers.append(Vabamorf().synthesize)
-    except Exception:
-        pass
-
     return synthesizers
 
 
 def synthesize_with_vabamorf(lemma, form):
     """
     Synthesize lemma with a given Vabamorf form (e.g. "sg g", "pl p").
+    Returns [] if synthesis isn't available.
     """
     if not lemma or not form:
         return []
