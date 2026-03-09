@@ -1,6 +1,10 @@
 .venv/
+venv/
+venv_py312/
 __pycache__/
 *.pyc
 logs/
 .vscode/
 Microsoft/
+.idea/
+.DS_Store

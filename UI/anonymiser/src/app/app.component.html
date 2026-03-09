@@ -1,80 +1,113 @@
-<body>
-  <ng-container *ngIf="!anomyizedText">
-    <div class="file-upload">
-      <ng-container *ngIf="processedText.length > 0">
-        <div class="wrapper">
-          <div class="text-wrap">
-            <div class="text">
-              <p>
-                <ng-container *ngFor="let part of processedText">
-                  <span *ngIf="part.normal" [innerHTML]="part.text"></span>
-                  <span *ngIf="!part.normal" 
-                        [ngStyle]="{'cursor': 'pointer', 'background-color': isSelected(part.match) ? part.selected : part.color}"
-                        (click)="selectMatch(part.match)"
-                        [innerHTML]="part.text">
-                  </span>
-                </ng-container>
-              </p>
-            </div>
-          </div>
-          
-          <div class="clicked-wrap">
-            <button mat-raised-button color="primary" class="toggle-button toggle" (click)="toggleAllSelections()">
-              <p>
-                {{ selectedMatches.length === wordsToHighlight.count ? "Eemalda kõik" : "Lisa kõik" }}
-              </p>
-            </button>
-            <div class="table-container">
-              <table class="highlight-table">
-                <tbody>
-                  <ng-container *ngFor="let info of selectedMatches">
-                    <tr [ngStyle]="{'background-color': getHighlightColor(info.match)}">
-                      <td class="info-cell">{{ info.match }}</td>
-                      <td class="remove-button-cell">
-                        <span (click)="removeMatch(info.match)">Eemalda</span>
-                      </td>
-                    </tr>
-                    <tr *ngIf="isCustomizable" [ngStyle]="{'background-color': getHighlightColor(info.match)}">
-                      <td colspan="2">
-                        <input type="text" [(ngModel)]="info.custom"/>
-                      </td>
-                    </tr>
-                  </ng-container>
-                </tbody>
-              </table>
-            </div>
-            <div class="form-container">
-              <input type="checkbox" [(ngModel)]="isCustomizable" /> Kohanda ise nimesid
-              <p>Vali Anonümiseerimise viis:</p>
-              <select [(ngModel)]="anonymizeOption">
-                <option value="words">Võõrandmetega</option>
-                <option value="asterisk">Tärnidega</option>
-              </select>
-              <br/>
-              <button mat-raised-button color="primary" class="toggle-button submit" (click)="submitSelections()">
-                Anonümiseeri
-              </button>
-            </div>
-          </div>
-        </div>
-      </ng-container>
-      
+<div class="page-shell" *ngIf="!anomyizedText">
+  <header class="hero">
+    <h1>Teksti anonümiseerija</h1>
+    <p>Märgi tundlikud andmed kiiresti ära ja loo puhas versioon ühe nupuga.</p>
+  </header>
+
+  <section class="input-card">
+    <div class="input-header">
+      <h2>Sisend</h2>
+      <button class="primary" (click)="onUpload()" [disabled]="!fileToUpload && !userInput.trim()">Tuvasta andmed</button>
+    </div>
+
+    <textarea
+      [(ngModel)]="userInput"
+      name="text"
+      rows="10"
+      placeholder="Kleebi siia tekst, mida soovid anonümiseerida..."
+    ></textarea>
+
+    <div class="file-row">
       <input type="file" (change)="onFileSelected($event)" id="file" [multiple]="false" hidden>
-      <textarea [(ngModel)]="userInput" class="upload-button" name="text" rows="20" cols="150"></textarea>
-      <p class="upload-button">või</p>
-      <label for="file" class="custom-file-input">
-        {{fileToUpload ? fileToUpload.name : 'Vali fail'}}
-      </label>
-      <br/>
-      <button mat-raised-button color="primary" class="upload-button" (click)="onUpload()" [disabled]="!fileToUpload && !userInput">Upload</button>
+      <label for="file" class="ghost">{{ fileToUpload ? fileToUpload.name : 'Või vali fail' }}</label>
     </div>
-  </ng-container>
-  <ng-container *ngIf="anomyizedText">
-  <div class="text-wrap">
-    <button mat-raised-button color="primary" class="toggle-button toggle" (click)="anomyizedText = ''">Tagasi</button>
-    <div class="text" >
-      <p [innerHTML]="formattedVariable"></p>
+  </section>
+
+  <section class="workspace" *ngIf="processedText.length > 0">
+    <article class="text-panel card">
+      <div class="panel-header">
+        <h3>Leitud üksused tekstis</h3>
+        <p>Klikka märgistusel või kasuta paremal olevat nimekirja.</p>
+      </div>
+
+      <div class="text-content">
+        <span *ngFor="let part of processedText">
+          <span *ngIf="part.normal">{{ part.text }}</span>
+          <button
+            *ngIf="!part.normal"
+            type="button"
+            class="inline-chip"
+            [class.active]="isSelected(part.key!)"
+            [style.--chip-color]="part.color"
+            [style.--chip-selected]="part.selected"
+            (click)="selectMatchByKey(part.key!)"
+          >
+            {{ part.text }}
+          </button>
+        </span>
+      </div>
+    </article>
+
+    <aside class="control-panel card">
+      <div class="panel-header">
+        <h3>Valik</h3>
+        <p>{{ selectedMatches.length }} / {{ selectableEntities.length }} valitud</p>
+      </div>
+
+      <div class="actions">
+        <button class="ghost" (click)="toggleAllSelections()">
+          {{ selectedMatches.length === selectableEntities.length ? 'Tühista kõik' : 'Vali kõik' }}
+        </button>
+        <button class="ghost" (click)="clearSelections()" [disabled]="selectedMatches.length === 0">Puhasta valik</button>
+      </div>
+
+      <div class="entity-groups">
+        <div class="group" *ngFor="let group of entityGroups">
+          <div class="group-title">
+            <span>{{ group.label }}</span>
+            <small>{{ getSelectedCount(group.type) }}/{{ group.items.length }}</small>
+          </div>
+
+          <label class="entity-row" *ngFor="let entity of group.items">
+            <input type="checkbox" [checked]="isSelected(entity.key)" (change)="selectMatchByKey(entity.key)">
+            <span class="swatch" [style.background]="entity.color"></span>
+            <span class="entity-text">{{ entity.match }}</span>
+          </label>
+        </div>
+      </div>
+
+      <div class="settings">
+        <label class="switch-row">
+          <input type="checkbox" [(ngModel)]="isCustomizable">
+          <span>Kirjuta asendus ise</span>
+        </label>
+
+        <label>Anonümiseerimise viis</label>
+        <select [(ngModel)]="anonymizeOption">
+          <option value="words">Võõrandmetega</option>
+          <option value="asterisk">Tärnidega</option>
+        </select>
+      </div>
+
+      <div class="custom-list" *ngIf="isCustomizable && selectedMatches.length > 0">
+        <h4>Kohandatud asendused</h4>
+        <label *ngFor="let info of selectedMatches" class="custom-item">
+          <span>{{ info.match }}</span>
+          <input type="text" [(ngModel)]="info.custom" placeholder="Asendustekst">
+        </label>
+      </div>
+
+      <button class="primary full" (click)="submitSelections()" [disabled]="selectedMatches.length === 0">Anonümiseeri</button>
+    </aside>
+  </section>
+</div>
+
+<div class="result-shell" *ngIf="anomyizedText">
+  <div class="card result-card">
+    <div class="panel-header">
+      <h3>Anonümiseeritud tekst</h3>
+      <button class="ghost" (click)="anomyizedText = ''">Tagasi</button>
     </div>
+    <div class="result-text" [innerHTML]="formattedVariable"></div>
   </div>
-  </ng-container>
-</body>
+</div>
