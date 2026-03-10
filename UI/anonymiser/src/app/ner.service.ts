@@ -12,16 +12,16 @@ export class NERService {
 
   getNamedEntities(text: string): Observable<Highligtables> {
     const body = {text};
-    return this.httpClient.post<Highligtables>('https://spears-music-frames-diverse.trycloudflare.com/text/', body);
+    return this.httpClient.post<Highligtables>('https://blind-kennedy-reforms-longer.trycloudflare.com/text/', body);
   }
 
   getNamedEntitiesFile(file: File): Observable<Highligtables> {
     const formData: FormData = new FormData();
     formData.append('file', file, file.name);
-    return this.httpClient.post<Highligtables>('https://spears-music-frames-diverse.trycloudflare.com/file/', formData)
+    return this.httpClient.post<Highligtables>('https://blind-kennedy-reforms-longer.trycloudflare.com/file/', formData)
   }
 
   submitSelectedMatches(selectedMatches: any[], text: string, anonymize: string): Observable<any> {
-    return this.httpClient.post<string>('https://spears-music-frames-diverse.trycloudflare.com/anonymise/', { text: text, matches: selectedMatches, anonymize });
+    return this.httpClient.post<string>('https://blind-kennedy-reforms-longer.trycloudflare.com/anonymise/', { text: text, matches: selectedMatches, anonymize });
   }
 }
