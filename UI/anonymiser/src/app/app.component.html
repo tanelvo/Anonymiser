@@ -1,7 +1,11 @@
-<div class="page-shell" *ngIf="!anomyizedText">
+<div class="top-nav">
+  <button class="ghost" [class.active-nav]="currentPage === 'anonymiser'" (click)="switchPage('anonymiser')">Anonümiseerija</button>
+  <button class="ghost" [class.active-nav]="currentPage === 'morphology'" (click)="switchPage('morphology')">Morfoloogia test</button>
+</div>
+
+<div class="page-shell" *ngIf="currentPage === 'anonymiser' && !anomyizedText">
   <header class="hero">
     <h1>Teksti anonümiseerija</h1>
-    <p>Märgi tundlikud andmed kiiresti ära ja loo puhas versioon ühe nupuga.</p>
   </header>
 
   <section class="input-card">
@@ -102,7 +106,7 @@
   </section>
 </div>
 
-<div class="result-shell" *ngIf="anomyizedText">
+<div class="result-shell" *ngIf="currentPage === 'anonymiser' && anomyizedText">
   <div class="card result-card">
     <div class="panel-header">
       <h3>Anonümiseeritud tekst</h3>
@@ -110,4 +114,55 @@
     </div>
     <div class="result-text" [innerHTML]="formattedVariable"></div>
   </div>
+</div>
+
+<div class="page-shell" *ngIf="currentPage === 'morphology'">
+  <header class="hero">
+    <h1>Morfoloogia test</h1>
+  </header>
+
+  <section class="input-card">
+    <div class="input-header">
+      <h2>Tekst</h2>
+      <div class="morph-actions">
+        <button class="ghost" (click)="resetMorphology()">Puhasta</button>
+        <button class="primary" (click)="runMorphology()" [disabled]="!morphologyInput.trim() || morphologyLoading">
+          {{ morphologyLoading ? 'Laen...' : 'Analüüsi' }}
+        </button>
+      </div>
+    </div>
+
+    <textarea
+      [(ngModel)]="morphologyInput"
+      name="morphology"
+      rows="8"
+      placeholder="Näide: Mari-Liisi tööaadress on Ehitajate tee 5."
+    ></textarea>
+  </section>
+
+  <section class="card morph-result" *ngIf="morphologyResult">
+    <div class="panel-header">
+      <h3>Analüüsi tulemus</h3>
+      <p>Nominatiivne lause: {{ morphologyResult.nominative_text }}</p>
+    </div>
+
+    <div class="morph-table-wrap">
+      <table class="morph-table">
+        <thead>
+          <tr>
+            <th>Sõna</th>
+            <th>Kääne</th>
+            <th>Nominatiiv</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr *ngFor="let row of morphologyResult.tokens">
+            <td>{{ row.token }}</td>
+            <td>{{ formatCaseLabel(row.case) }}</td>
+            <td>{{ row.nominative }}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
 </div>

@@ -3,6 +3,7 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 from name_entity_recognizer import process_document
 from anonymiser import anonymize_text
+from morphology import analyze_text_morphology, to_nominative
 
 app = Flask(__name__)
 CORS(app)
@@ -61,6 +62,19 @@ def text_process():
 def anonymize():
     text = anonymize_text(request.json)
     return jsonify(text)
+
+
+@app.route('/morphology/', methods=['POST'])
+def morphology_process():
+    data = request.json or {}
+    text = data.get('text', '')
+    rows = analyze_text_morphology(text)
+    response = {
+        "text": text,
+        "nominative_text": to_nominative(text) if text else "",
+        "tokens": rows
+    }
+    return jsonify(response)
     
 if __name__ == '__main__':
     app.run(host='localhost', port=8080)

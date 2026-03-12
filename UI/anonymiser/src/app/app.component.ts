@@ -1,6 +1,6 @@
 import { Component } from '@angular/core';
 import { HttpErrorResponse } from '@angular/common/http';
-import { NERService } from './ner.service';
+import { MorphologyResponse, NERService } from './ner.service';
 
 export interface Highligtables {
   text: string;
@@ -67,8 +67,12 @@ interface EntityGroup {
   styleUrls: ['./app.component.css']
 })
 export class AppComponent {
+  currentPage: 'anonymiser' | 'morphology' = 'anonymiser';
   fileToUpload: File | null = null;
   userInput = '';
+  morphologyInput = '';
+  morphologyResult: MorphologyResponse | null = null;
+  morphologyLoading = false;
 
   wordsToHighlight: Highligtables = {
     text: '',
@@ -112,8 +116,28 @@ export class AppComponent {
     'dates',
     'addresses'
   ];
+  private readonly caseLabels: Record<string, string> = {
+    Nom: 'nimetav',
+    Gen: 'omastav',
+    Par: 'osastav',
+    Ill: 'sisseütlev',
+    Ine: 'seesütlev',
+    Ela: 'seestütlev',
+    All: 'alaleütlev',
+    Ade: 'alalütlev',
+    Abl: 'alaltütlev',
+    Tra: 'saav',
+    Ter: 'rajav',
+    Ess: 'olev',
+    Com: 'ilmaütlev',
+    Abe: 'kaasaütlev'
+  };
 
   constructor(private nerService: NERService) {}
+
+  switchPage(page: 'anonymiser' | 'morphology'): void {
+    this.currentPage = page;
+  }
 
   onFileSelected(event: Event): void {
     const target = event.target as HTMLInputElement;
@@ -314,6 +338,39 @@ export class AppComponent {
 
   isSelected(key: string): boolean {
     return this.selectedMatches.some((m) => m.key === key);
+  }
+
+  runMorphology(): void {
+    if (!this.morphologyInput.trim()) {
+      return;
+    }
+
+    this.morphologyLoading = true;
+    this.morphologyResult = null;
+    this.nerService.getMorphology(this.morphologyInput).subscribe(
+      (response) => {
+        this.morphologyResult = response;
+        this.morphologyLoading = false;
+      },
+      (error: HttpErrorResponse) => {
+        console.error('Morphology request error', error);
+        this.morphologyLoading = false;
+      }
+    );
+  }
+
+  resetMorphology(): void {
+    this.morphologyInput = '';
+    this.morphologyResult = null;
+    this.morphologyLoading = false;
+  }
+
+  formatCaseLabel(caseCode: string): string {
+    if (!caseCode) {
+      return '-';
+    }
+    const estonian = this.caseLabels[caseCode];
+    return estonian ? `${caseCode} (${estonian})` : caseCode;
   }
 
   private entityKey(type: EntityType, match: string): string {

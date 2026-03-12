@@ -3,7 +3,7 @@ from fuzzysearch import find_near_matches
 from transformers import BertTokenizer, BertForTokenClassification
 from transformers import pipeline
 from collections import defaultdict
-from morphology import to_nominative
+from morphology import to_nominative, synthesize_with_vabamorf
 import string
 import re
 import numpy as np
@@ -129,8 +129,12 @@ def process_document(text):
         text
     )
     result['person'] = merge_adjacent_person_names(result['person'], text)
+    result['person'] = strip_formal_titles_from_person_matches(result['person'], text)
     result['person'] = normalize_person_matches(result['person'])
+    result['person'] = merge_similar_full_name_variants(result['person'])
+    result['person'] = merge_single_token_person_mentions(result['person'])
     result['person'] = filter_known_persons(result['person'])
+    result = resolve_cross_category_overlaps(result, text)
 
     keys = ['person', 'organisation', 'location', 'phone_numbers', 'email_addresses', 'id_numbers', 'addresses']
     result['count'] = sum(len(result[key]) for key in keys)
@@ -160,16 +164,17 @@ def normalize_person_matches(person_array):
         raw = match.get("match", "")
         nom = to_nominative(raw) or raw
         print(f"[nominative] raw='{raw}' nom='{nom}'")
+        nom = re.sub(r"\s+", " ", nom).strip()
         if nom.lower() == raw.lower():
             nom = raw
-        elif len(raw.split()) == 1:
-            nom = nom[:1].upper() + nom[1:]
         if len(nom.split()) < len(raw.split()):
             nom = raw
-        if nom in merged:
-            merged[nom]["slots"].extend(match.get("slots", []))
+        key = nom.lower()
+        display_name = format_person_name(nom)
+        if key in merged:
+            merged[key]["slots"].extend(match.get("slots", []))
         else:
-            merged[nom] = {"match": nom, "slots": list(match.get("slots", []))}
+            merged[key] = {"match": display_name, "slots": list(match.get("slots", []))}
 
     # de-dup slots
     for obj in merged.values():
@@ -178,9 +183,129 @@ def normalize_person_matches(person_array):
     return list(merged.values())
 
 
+def format_person_name(name):
+    """
+    Normalize person-name casing while preserving hyphenated compounds.
+    """
+    def cap_piece(piece):
+        if not piece:
+            return piece
+        return piece[:1].upper() + piece[1:].lower()
+
+    tokens = []
+    for token in name.split():
+        if "-" in token:
+            tokens.append("-".join(cap_piece(part) for part in token.split("-")))
+        else:
+            tokens.append(cap_piece(token))
+    return " ".join(tokens)
+
+
+def merge_similar_full_name_variants(person_array):
+    """
+    Merge full-name variants that likely refer to the same person,
+    e.g. "Kati Kask" and "Kati Kase".
+    """
+    if not person_array:
+        return person_array
+
+    merged = []
+    for person in person_array:
+        name = (person.get("match") or "").strip()
+        if not name:
+            continue
+
+        matched_idx = None
+        for idx, existing in enumerate(merged):
+            if are_likely_same_full_name(name, existing["match"]):
+                matched_idx = idx
+                break
+
+        if matched_idx is None:
+            merged.append({
+                "match": name,
+                "slots": list(person.get("slots", []))
+            })
+        else:
+            merged[matched_idx]["slots"].extend(person.get("slots", []))
+            merged[matched_idx]["match"] = choose_preferred_full_name(
+                merged[matched_idx]["match"],
+                name
+            )
+
+    for person in merged:
+        person["slots"] = list(dict.fromkeys(person.get("slots", [])))
+
+    return merged
+
+
+def are_likely_same_full_name(name_a, name_b):
+    """
+    Conservative matcher for full-name variants caused by Estonian inflection.
+    """
+    parts_a = [p for p in name_a.split() if p]
+    parts_b = [p for p in name_b.split() if p]
+    if len(parts_a) < 2 or len(parts_b) < 2:
+        return False
+
+    first_a = (to_nominative(parts_a[0]) or parts_a[0]).lower()
+    first_b = (to_nominative(parts_b[0]) or parts_b[0]).lower()
+    if first_a != first_b:
+        return False
+
+    last_a = parts_a[-1].lower()
+    last_b = parts_b[-1].lower()
+    if last_a == last_b:
+        return True
+
+    forms_to_try = ["sg n", "sg g", "sg p"]
+
+    def gen_forms(token):
+        generated = {token.lower()}
+        try:
+            nom = (to_nominative(token) or token).lower()
+            generated.add(nom)
+        except Exception:
+            pass
+        for lemma in list(generated):
+            for form in forms_to_try:
+                try:
+                    out = synthesize_with_vabamorf(lemma, form) or []
+                except Exception:
+                    out = []
+                for cand in out:
+                    generated.add(str(cand).lower())
+        return generated
+
+    a_forms = gen_forms(parts_a[-1])
+    b_forms = gen_forms(parts_b[-1])
+    if last_b in a_forms or last_a in b_forms:
+        return True
+
+    # Final conservative fallback: strong lexical similarity on surname.
+    return difflib.SequenceMatcher(None, last_a, last_b).ratio() >= 0.8
+
+
+def choose_preferred_full_name(name_a, name_b):
+    """
+    Pick the better display form when two full names are merged.
+    Prefer surnames ending with a consonant (often nominative).
+    """
+    def score(name):
+        parts = [p for p in name.split() if p]
+        if len(parts) < 2:
+            return (0, len(name))
+        surname = parts[-1]
+        ends_consonant = surname[-1].lower() not in "aeiouõäöü"
+        return (1 if ends_consonant else 0, len(name))
+
+    return name_a if score(name_a) >= score(name_b) else name_b
+
+
 def merge_adjacent_person_names(person_array, text):
     """
-    Merge adjacent person names like "Mart" + "Sander" into "Mart Sander".
+    Merge adjacent person names like "Mart" + "Sander" into "Mart Sander",
+    and handle hyphenated names like "Mari" + "Liis" -> "Mari-Liis".
     """
     if not person_array:
         return person_array
@@ -203,9 +328,10 @@ def merge_adjacent_person_names(person_array, text):
         j = i + 1
         while j < len(entries):
             next_start, next_end = entries[j]["slot"]
-            if next_start == merged_end + 1 and text[merged_end:next_start] == " ":
+            connector = text[merged_end:next_start]
+            if next_start <= merged_end + 2 and connector in {" ", "-"}:
                 next_text = text[next_start:next_end]
-                merged_text = merged_text + " " + next_text
+                merged_text = merged_text + connector + next_text
                 merged_end = next_end
                 j += 1
             else:
@@ -293,7 +419,10 @@ def is_known_person(name):
     print(f"[wikidata] check name='{name}'")
     key = name.lower().strip()
     if key in _KNOWN_PERSON_CACHE:
-        return _KNOWN_PERSON_CACHE[key]
+        cached = _KNOWN_PERSON_CACHE[key]
+        status = "MATCH" if cached else "NO MATCH"
+        print(f"[wikidata] name='{name}' -> {status} (cache)")
+        return cached
 
     try:
         search_params = {
@@ -319,14 +448,17 @@ def is_known_person(name):
                 continue
             if _wikidata_is_human(qid):
                 _KNOWN_PERSON_CACHE[key] = True
+                print(f"[wikidata] name='{name}' -> MATCH (qid={qid})")
                 return True
     except Exception as exc:
         print("========================================")
         print(f"[wikidata] error for '{name}': {exc}")
         _KNOWN_PERSON_CACHE[key] = False
+        print(f"[wikidata] name='{name}' -> NO MATCH (error)")
         return False
 
     _KNOWN_PERSON_CACHE[key] = False
+    print(f"[wikidata] name='{name}' -> NO MATCH")
     return False
 
 
@@ -573,11 +705,20 @@ PERSON_STOPWORDS = {
     "de", "di", "da", "la", "le", "el", "van", "von", "der", "den", "del",
     "della", "du", "des", "dos", "das", "san", "st", "saint"
 }
+PERSON_FORMAL_TITLES = {
+    "härra", "proua", "preili", "hr", "pr", "dr", "doktor", "professor"
+}
+
+
+def normalize_person_token(word):
+    return re.sub(r"[^\wäöüõšžÄÖÜÕŠŽ-]", "", word).strip().lower()
 
 
 def is_plausible_person_token(word):
     stripped = word.replace("#", "").strip()
     if len(stripped) < PERSON_MIN_LEN:
+        return False
+    if normalize_person_token(stripped) in PERSON_FORMAL_TITLES:
         return False
     if stripped.lower() in PERSON_STOPWORDS:
         return False
@@ -709,6 +850,19 @@ def find_all_matches(entity_list, text, entity_type=None):
             word_obj['slots'] = [slot for slot in word_obj['slots'] if slot not in [obj['slots'][0] for obj in new_word_objs]]
     
     # Remove word objects with no slots after filtering
+    if entity_type == "person":
+        # Guard against fuzzy spans that swallow multiple mentions/sentences,
+        # e.g. "Kati Tamm. Kati Tamme" as one person.
+        disallowed_punct = re.compile(r"[.!?;\n]")
+        for word_obj in word_array:
+            cleaned_slots = []
+            for slot in word_obj['slots']:
+                matched_text = text[slot[0]:slot[1]]
+                if disallowed_punct.search(matched_text):
+                    continue
+                cleaned_slots.append(slot)
+            word_obj['slots'] = cleaned_slots
+
     word_array = [word_obj for word_obj in word_array if word_obj['slots']]
 
     return word_array, no_match_array
@@ -877,6 +1031,146 @@ def set_longest_match_from_slots(person_array, text):
         person['match'] = longest_match
     
     return person_array
+
+
+def resolve_cross_category_overlaps(result, text):
+    """
+    Ensure one text span appears in only one category.
+    Higher-priority categories keep overlapping spans.
+    """
+    # Structured patterns are more reliable than open NER classes.
+    priority = [
+        "email_addresses",
+        "id_numbers",
+        "phone_numbers",
+        "addresses",
+        "person",
+        "organisation",
+        "location",
+    ]
+
+    claimed_slots = []
+    for category in priority:
+        entities = result.get(category, [])
+        pruned_entities = []
+        for entity in entities:
+            kept_slots = []
+            for slot in entity.get("slots", []):
+                if not any(slots_overlap(slot, seen) for seen in claimed_slots):
+                    kept_slots.append(slot)
+            if kept_slots:
+                claimed_slots.extend(kept_slots)
+                longest = max((text[s:e] for s, e in kept_slots), key=len, default=entity.get("match", ""))
+                pruned_entities.append({
+                    "match": longest,
+                    "slots": list(dict.fromkeys(kept_slots)),
+                })
+        result[category] = pruned_entities
+    return result
+
+
+def slots_overlap(slot1, slot2):
+    return not (slot1[1] <= slot2[0] or slot2[1] <= slot1[0])
+
+
+def merge_single_token_person_mentions(person_array):
+    """
+    Merge single-token person mentions into a full-name entry when unambiguous.
+    Example: "Mari-Liis" + "Mari-Liis Kask" => keep only "Mari-Liis Kask" with combined slots.
+    """
+    if not person_array:
+        return person_array
+
+    def nom_key(name):
+        if not name:
+            return ""
+        try:
+            return (to_nominative(name) or name).strip().lower()
+        except Exception:
+            return name.strip().lower()
+
+    full_names = [p for p in person_array if len((p.get("match") or "").split()) >= 2]
+    single_names = [p for p in person_array if len((p.get("match") or "").split()) == 1]
+
+    if not full_names or not single_names:
+        return person_array
+
+    # Map normalized first-name token -> full-name indices.
+    first_token_to_full = defaultdict(list)
+    for idx, person in enumerate(full_names):
+        first_token = (person.get("match") or "").split()[0]
+        first_token_to_full[nom_key(first_token)].append(idx)
+
+    merged_full = [
+        {"match": p.get("match", ""), "slots": list(p.get("slots", []))}
+        for p in full_names
+    ]
+    kept_singles = []
+
+    for single in single_names:
+        token = (single.get("match") or "").strip()
+        key = nom_key(token)
+        candidates = first_token_to_full.get(key, [])
+        if len(candidates) == 1:
+            target_idx = candidates[0]
+            merged_full[target_idx]["slots"].extend(single.get("slots", []))
+        else:
+            # Keep when ambiguous or no matching full-name candidate.
+            kept_singles.append(single)
+
+    # De-dup slots and preserve full-name labels.
+    for person in merged_full:
+        person["slots"] = list(dict.fromkeys(person.get("slots", [])))
+
+    return merged_full + kept_singles
+
+
+def strip_formal_titles_from_person_matches(person_array, text):
+    """
+    Remove formal title prefixes (e.g. "Härra", "Proua") from person matches.
+    Also drops title-only matches.
+    """
+    if not person_array:
+        return person_array
+
+    title_pattern = re.compile(
+        r'^(?:härra|proua|preili|hr|pr|dr|doktor|professor)\b[\s,.:;-]*',
+        re.IGNORECASE
+    )
+
+    cleaned = []
+    for person in person_array:
+        new_slots = []
+        for slot in person.get('slots', []):
+            start, end = slot
+            slot_text = text[start:end]
+            title_match = title_pattern.match(slot_text)
+
+            if not title_match:
+                new_slots.append((start, end))
+                continue
+
+            trimmed = slot_text[title_match.end():].lstrip()
+            if not trimmed:
+                # Title-only match; skip.
+                continue
+
+            leading_ws = len(slot_text[title_match.end():]) - len(trimmed)
+            new_start = start + title_match.end() + leading_ws
+            if new_start < end:
+                new_slots.append((new_start, end))
+
+        if not new_slots:
+            continue
+
+        # de-dup slots while preserving order
+        deduped_slots = list(dict.fromkeys(new_slots))
+        cleaned.append({
+            "match": person.get("match", ""),
+            "slots": deduped_slots
+        })
+
+    return set_longest_match_from_slots(cleaned, text)
 
 def process_chunk(chunk):
     """

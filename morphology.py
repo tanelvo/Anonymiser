@@ -50,9 +50,7 @@ def _get_morph_layer(text_obj):
 
     try:
         text_obj.tag_layer(["morph_analysis"])
-        print(text_obj.tag_layer(["morph_analysis"]))
         if "morph_analysis" in text_obj.layers:
-            print(text_obj["morph_analysis"])
             return text_obj["morph_analysis"]
     except Exception:
         pass
@@ -147,7 +145,79 @@ def to_nominative(text):
 
         tokens.append(lemma or word.text)
 
-    return " ".join(tokens)
+    result_tokens = []
+    join_next = False
+    for tok in tokens:
+        if tok == "-":
+            if result_tokens:
+                result_tokens[-1] = result_tokens[-1] + "-"
+                join_next = True
+            continue
+        if join_next and result_tokens:
+            result_tokens[-1] = result_tokens[-1] + tok
+            join_next = False
+        else:
+            result_tokens.append(tok)
+
+    return " ".join(result_tokens)
+
+
+def analyze_text_morphology(text):
+    """
+    Return per-token morphology info:
+    - token: original surface form
+    - case: grammatical case (if available)
+    - nominative: lemma/root-based nominative fallback
+    """
+    if not text:
+        return []
+
+    if Text is None:
+        raise ImportError("estnltk is required for morphology analysis")
+
+    try:
+        text_obj = Text(text)
+        morph_layer = _get_morph_layer(text_obj)
+        if morph_layer is None:
+            return []
+        if "words" not in text_obj.layers:
+            text_obj.tag_layer(["words"])
+        words_layer = text_obj["words"]
+    except Exception:
+        return []
+
+    results = []
+    size = min(len(morph_layer), len(words_layer))
+    for i in range(size):
+        word = words_layer[i]
+        span = morph_layer[i]
+        ann = None
+        if hasattr(span, "annotations") and span.annotations:
+            ann = span.annotations[0]
+        elif hasattr(span, "analysis") and span.analysis:
+            ann = span.analysis[0]
+        elif isinstance(span, dict):
+            ann = span
+
+        form = None
+        lemma = None
+        if isinstance(ann, dict):
+            form = ann.get("form") or ann.get("form_name")
+            lemma = ann.get("lemma") or ann.get("root")
+            if not lemma and ann.get("root_tokens"):
+                lemma = ann.get("root_tokens")[0]
+        else:
+            form = getattr(ann, "form", None)
+            lemma = getattr(ann, "lemma", None)
+
+        case = _case_from_form(form)
+        results.append({
+            "token": word.text,
+            "case": case or "",
+            "nominative": lemma or word.text
+        })
+
+    return results
 
 
 
