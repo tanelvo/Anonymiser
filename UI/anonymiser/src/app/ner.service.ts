@@ -7,10 +7,13 @@ export interface MorphologyToken {
   token: string;
   case: string;
   nominative: string;
+  target_case_value: string;
 }
 
 export interface MorphologyResponse {
   text: string;
+  target_case: string;
+  combine_words: boolean;
   nominative_text: string;
   tokens: MorphologyToken[];
 }
@@ -39,7 +42,11 @@ export class NERService {
     return this.httpClient.post<string>(this.BASE_URL + '/anonymise/', { text: text, matches: selectedMatches, anonymize });
   }
 
-  getMorphology(text: string): Observable<MorphologyResponse> {
-    return this.httpClient.post<MorphologyResponse>(this.BASE_URL + '/morphology/', { text });
+  getMorphology(text: string, targetCase: string, combineWords: boolean): Observable<MorphologyResponse> {
+    return this.httpClient.post<MorphologyResponse>(this.BASE_URL + '/morphology/', {
+      text,
+      target_case: targetCase,
+      combine_words: combineWords
+    });
   }
 }
