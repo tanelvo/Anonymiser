@@ -55,6 +55,7 @@ interface SelectableEntity {
   color: string;
   selected: string;
   custom?: string;
+  family_group?: string;
 }
 
 interface EntityGroup {
@@ -104,6 +105,9 @@ export class AppComponent {
   morphologyLoading = false;
   morphologyTargetCase = '';
   morphologyCombineWords = false;
+  familyCategories: string[] = [];
+  openFamilyMenuKey: string | null = null;
+  private familyCounter = 1;
 
   private readonly alreadyAnonymizedKeys = new Set<string>();
   private readonly blockedReplacementMatches = new Set<string>();
@@ -214,6 +218,7 @@ export class AppComponent {
         match: selected.match,
         slots: matchedEntity ? matchedEntity.slots : [],
         custom: selected.custom || null,
+        family_group: selected.family_group || null,
         type: selected.type
       };
     });
@@ -260,9 +265,11 @@ export class AppComponent {
     }
 
     const customMap = new Map(this.selectedMatches.map((item) => [item.key, item.custom]));
+    const familyGroupMap = new Map(this.selectedMatches.map((item) => [item.key, item.family_group]));
     this.selectedMatches = this.selectableEntities.map((entity) => ({
       ...entity,
-      custom: customMap.get(entity.key)
+      custom: customMap.get(entity.key),
+      family_group: familyGroupMap.get(entity.key)
     }));
   }
 
@@ -276,6 +283,71 @@ export class AppComponent {
 
   getSelectedCount(type: EntityType): number {
     return this.selectedMatches.filter((item) => item.type === type).length;
+  }
+
+  isPersonEntity(type: EntityType): boolean {
+    return type === 'person' || type === 'known_persons';
+  }
+
+  getPersonSelectedMatches(): SelectableEntity[] {
+    return this.selectedMatches.filter((item) => this.isPersonEntity(item.type));
+  }
+
+  hasSurnameMatch(entity: SelectableEntity): boolean {
+    const surname = this.getSurname(entity.match);
+    if (!surname) {
+      return false;
+    }
+    const peoplePool = this.selectableEntities.filter((item) => this.isPersonEntity(item.type));
+    return peoplePool.filter((item) => this.getSurname(item.match) === surname).length > 1;
+  }
+
+  toggleFamilyMenu(key: string): void {
+    this.openFamilyMenuKey = this.openFamilyMenuKey === key ? null : key;
+  }
+
+  isFamilyMenuOpen(key: string): boolean {
+    return this.openFamilyMenuKey === key;
+  }
+
+  getFamilyGroupForKey(key: string): string {
+    return this.selectedMatches.find((item) => item.key === key)?.family_group || '';
+  }
+
+  createFamilyAndAssign(key: string): void {
+    const sourceEntity = this.selectableEntities.find((item) => item.key === key);
+    const surnameBase = sourceEntity ? this.getSurnameDisplay(sourceEntity.match) : '';
+    const familyName = this.buildUniqueFamilyName(surnameBase || `perekond_${this.familyCounter++}`);
+    this.familyCategories.push(familyName);
+    this.assignToFamily(key, familyName, false);
+  }
+
+  assignToFamily(key: string, familyName: string, includeSameSurname: boolean): void {
+    this.ensureSelectedByKey(key);
+    const baseEntity = this.selectedMatches.find((item) => item.key === key);
+    if (!baseEntity) {
+      return;
+    }
+
+    this.setFamilyGroupForKey(key, familyName);
+
+    if (includeSameSurname) {
+      const surname = this.getSurname(baseEntity.match);
+      if (surname) {
+        const peoplePool = this.selectableEntities.filter((item) => this.isPersonEntity(item.type));
+        peoplePool
+          .filter((item) => this.getSurname(item.match) === surname)
+          .forEach((item) => {
+            this.ensureSelectedByKey(item.key);
+            this.setFamilyGroupForKey(item.key, familyName);
+          });
+      }
+    }
+
+    if (!this.familyCategories.includes(familyName)) {
+      this.familyCategories.push(familyName);
+    }
+    this.openFamilyMenuKey = null;
   }
 
   isSelected(key: string): boolean {
@@ -330,6 +402,9 @@ export class AppComponent {
     };
     this.alreadyAnonymizedKeys.clear();
     this.blockedReplacementMatches.clear();
+    this.familyCategories = [];
+    this.openFamilyMenuKey = null;
+    this.familyCounter = 1;
   }
 
   runMorphology(): void {
@@ -552,5 +627,46 @@ export class AppComponent {
 
   private normalizeTerm(term: string): string {
     return term.replace(/\s+/g, ' ').trim().toLowerCase();
+  }
+
+  private getSurname(match: string): string {
+    const parts = match.split(/\s+/).filter((p) => p);
+    if (parts.length < 2) {
+      return '';
+    }
+    return this.normalizeTerm(parts[parts.length - 1]).replace(/[^\p{L}-]/gu, '');
+  }
+
+  private getSurnameDisplay(match: string): string {
+    const parts = match.split(/\s+/).filter((p) => p);
+    if (parts.length < 2) {
+      return '';
+    }
+    return parts[parts.length - 1].replace(/[^\p{L}-]/gu, '');
+  }
+
+  private buildUniqueFamilyName(base: string): string {
+    let candidate = base;
+    let index = 2;
+    while (this.familyCategories.includes(candidate)) {
+      candidate = `${base}_${index++}`;
+    }
+    return candidate;
+  }
+
+  private ensureSelectedByKey(key: string): void {
+    if (this.selectedMatches.some((item) => item.key === key)) {
+      return;
+    }
+    const entity = this.selectableEntities.find((item) => item.key === key);
+    if (entity) {
+      this.selectedMatches.push({ ...entity });
+    }
+  }
+
+  private setFamilyGroupForKey(key: string, familyName: string): void {
+    this.selectedMatches = this.selectedMatches.map((item) =>
+      item.key === key ? { ...item, family_group: familyName } : item
+    );
   }
 }

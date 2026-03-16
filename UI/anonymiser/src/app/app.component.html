@@ -80,11 +80,47 @@
             <small>{{ getSelectedCount(group.type) }}/{{ group.items.length }}</small>
           </div>
 
-          <label class="entity-row" *ngFor="let entity of group.items">
-            <input type="checkbox" [checked]="isSelected(entity.key)" (change)="selectMatchByKey(entity.key)">
-            <span class="swatch" [style.background]="entity.color"></span>
-            <span class="entity-text">{{ entity.match }}</span>
-          </label>
+          <div class="entity-row-wrap" *ngFor="let entity of group.items">
+            <label class="entity-row">
+              <input type="checkbox" [checked]="isSelected(entity.key)" (change)="selectMatchByKey(entity.key)">
+              <span class="swatch" [style.background]="entity.color"></span>
+              <span class="entity-text">{{ entity.match }}</span>
+              <button
+                type="button"
+                class="tiny ghost inline-family-btn"
+                *ngIf="isPersonEntity(entity.type) && hasSurnameMatch(entity)"
+                (click)="toggleFamilyMenu(entity.key); $event.preventDefault(); $event.stopPropagation()"
+              >
+                Perekond
+              </button>
+              <span class="family-chip" *ngIf="getFamilyGroupForKey(entity.key) as family">{{ family }}</span>
+            </label>
+
+            <div class="family-actions" *ngIf="isPersonEntity(entity.type) && hasSurnameMatch(entity) && isFamilyMenuOpen(entity.key)">
+              <div class="family-menu">
+                <button
+                  type="button"
+                  class="tiny ghost"
+                  *ngFor="let family of familyCategories"
+                  (click)="assignToFamily(entity.key, family, false)"
+                >
+                  Lisa {{ family }} gruppi
+                </button>
+
+                <button
+                  type="button"
+                  class="tiny ghost"
+                  *ngFor="let family of familyCategories"
+                  (click)="assignToFamily(entity.key, family, true)"
+                >
+                  Lisa kõik sama perekonnanimega: {{ family }}
+                </button>
+                <button type="button" class="tiny ghost" (click)="createFamilyAndAssign(entity.key)">
+                  Loo uus perekonna grupp
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 

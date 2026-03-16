@@ -94,6 +94,7 @@ def anonymize_text(data):
     matches = data["matches"]
     anonymize = data["anonymize"]
     blocked_terms = set()
+    family_group_to_surname = {}
 
     if anonymize == "asterisk":
         for match in matches:
@@ -116,11 +117,20 @@ def anonymize_text(data):
             match_parts = match_text.split()
             first_name = match_parts[0] if match_parts else ""
             last_name = match_parts[1] if len(match_parts) > 1 else None
+            family_group = (match.get("family_group") or "").strip().lower()
             if custom_replacement:
                 replacement_first, replacement_last = custom_replacement.split() if ' ' in custom_replacement else (custom_replacement, "")
+                if not replacement_last and family_group:
+                    replacement_last = family_group_to_surname.get(family_group) or random.choice(family_names)
+                    family_group_to_surname[family_group] = replacement_last
             else:
                 replacement_first = pick_replacement_first(first_name)
-                replacement_last = random.choice(family_names)
+                if family_group:
+                    if family_group not in family_group_to_surname:
+                        family_group_to_surname[family_group] = random.choice(family_names)
+                    replacement_last = family_group_to_surname[family_group]
+                else:
+                    replacement_last = random.choice(family_names)
 
             has_capitalized_last_name = False
             if last_name:
