@@ -3,15 +3,22 @@
   <button class="ghost" [class.active-nav]="currentPage === 'morphology'" (click)="switchPage('morphology')">Morfoloogia test</button>
 </div>
 
-<div class="page-shell" *ngIf="currentPage === 'anonymiser' && !anomyizedText">
+<div class="page-shell" *ngIf="currentPage === 'anonymiser'">
+  <div class="loading-overlay" *ngIf="anonymizerLoading">
+    <div class="spinner"></div>
+    <p>Laen andmeid...</p>
+  </div>
+
   <header class="hero">
     <h1>Teksti anonümiseerija</h1>
   </header>
 
-  <section class="input-card">
+  <section class="input-card" *ngIf="!hasStartedAnonymiser">
     <div class="input-header">
       <h2>Sisend</h2>
-      <button class="primary" (click)="onUpload()" [disabled]="!fileToUpload && !userInput.trim()">Tuvasta andmed</button>
+      <button class="primary" (click)="onUpload()" [disabled]="(!fileToUpload && !userInput.trim()) || anonymizerLoading">
+        {{ anonymizerLoading ? 'Laen...' : 'Tuvasta andmed' }}
+      </button>
     </div>
 
     <textarea
@@ -27,11 +34,11 @@
     </div>
   </section>
 
-  <section class="workspace" *ngIf="processedText.length > 0">
+  <section class="workspace" *ngIf="hasStartedAnonymiser && !isEditingCurrentText">
     <article class="text-panel card">
       <div class="panel-header">
-        <h3>Leitud üksused tekstis</h3>
-        <p>Klikka märgistusel või kasuta paremal olevat nimekirja.</p>
+        <h3>Tekst</h3>
+        <p>Valimata üksused jäävad alles ja saad neid järgmises ringis anonümiseerida.</p>
       </div>
 
       <div class="text-content">
@@ -42,6 +49,7 @@
             type="button"
             class="inline-chip"
             [class.active]="isSelected(part.key!)"
+            [class.known-wiki]="part.type === 'known_persons'"
             [style.--chip-color]="part.color"
             [style.--chip-selected]="part.selected"
             (click)="selectMatchByKey(part.key!)"
@@ -59,13 +67,13 @@
       </div>
 
       <div class="actions">
-        <button class="ghost" (click)="toggleAllSelections()">
+        <button class="ghost" (click)="toggleAllSelections()" [disabled]="selectableEntities.length === 0">
           {{ selectedMatches.length === selectableEntities.length ? 'Tühista kõik' : 'Vali kõik' }}
         </button>
         <button class="ghost" (click)="clearSelections()" [disabled]="selectedMatches.length === 0">Puhasta valik</button>
       </div>
 
-      <div class="entity-groups">
+      <div class="entity-groups" *ngIf="selectableEntities.length > 0; else emptyEntities">
         <div class="group" *ngFor="let group of entityGroups">
           <div class="group-title">
             <span>{{ group.label }}</span>
@@ -79,6 +87,10 @@
           </label>
         </div>
       </div>
+
+      <ng-template #emptyEntities>
+        <div class="empty-state">Midagi rohkem anonümiseerida ei leitud.</div>
+      </ng-template>
 
       <div class="settings">
         <label class="switch-row">
@@ -101,22 +113,45 @@
         </label>
       </div>
 
-      <button class="primary full" (click)="submitSelections()" [disabled]="selectedMatches.length === 0">Anonümiseeri</button>
+      <button class="primary full" (click)="submitSelections()" [disabled]="selectedMatches.length === 0 || anonymizerLoading">
+        {{ anonymizerLoading ? 'Anonümiseerin...' : 'Anonümiseeri valitud' }}
+      </button>
+
+      <div class="actions secondary-actions">
+        <button class="ghost" (click)="openEditMode()">Muuda teksti</button>
+        <button class="ghost" (click)="resetAnonymiser()">Uus sisend</button>
+      </div>
     </aside>
+  </section>
+
+  <section class="card edit-card" *ngIf="hasStartedAnonymiser && isEditingCurrentText">
+    <div class="panel-header">
+      <h3>Muuda teksti</h3>
+      <p>Muuda teksti ja tuvasta üksused uuesti.</p>
+    </div>
+
+    <textarea
+      [(ngModel)]="editorText"
+      name="editorText"
+      rows="12"
+      placeholder="Muuda anonümiseeritud teksti..."
+    ></textarea>
+
+    <div class="actions">
+      <button class="ghost" (click)="cancelEditMode()">Tagasi</button>
+      <button class="primary" (click)="applyEditedText()" [disabled]="!editorText.trim() || anonymizerLoading">
+        {{ anonymizerLoading ? 'Uuendan...' : 'Salvesta ja tuvasta uuesti' }}
+      </button>
+    </div>
   </section>
 </div>
 
-<div class="result-shell" *ngIf="currentPage === 'anonymiser' && anomyizedText">
-  <div class="card result-card">
-    <div class="panel-header">
-      <h3>Anonümiseeritud tekst</h3>
-      <button class="ghost" (click)="anomyizedText = ''">Tagasi</button>
-    </div>
-    <div class="result-text" [innerHTML]="formattedVariable"></div>
-  </div>
-</div>
-
 <div class="page-shell" *ngIf="currentPage === 'morphology'">
+  <div class="loading-overlay" *ngIf="morphologyLoading">
+    <div class="spinner"></div>
+    <p>Laen andmeid...</p>
+  </div>
+
   <header class="hero">
     <h1>Morfoloogia test</h1>
   </header>
@@ -132,6 +167,19 @@
       </div>
     </div>
 
+    <div class="morph-target-row">
+      <label for="targetCase">Teisenda kääntesse</label>
+      <select id="targetCase" [(ngModel)]="morphologyTargetCase">
+        <option value="">Ei teisenda</option>
+        <option *ngFor="let code of morphologyCaseOptions" [value]="code">{{ formatCaseLabel(code) }}</option>
+      </select>
+    </div>
+
+    <label class="switch-row morph-combine-row">
+      <input type="checkbox" [(ngModel)]="morphologyCombineWords">
+      <span>Käsitle kogu sisendit ühe morfoloogiaüksusena (mitme sõnalised nimed)</span>
+    </label>
+
     <textarea
       [(ngModel)]="morphologyInput"
       name="morphology"
@@ -143,7 +191,6 @@
   <section class="card morph-result" *ngIf="morphologyResult">
     <div class="panel-header">
       <h3>Analüüsi tulemus</h3>
-      <p>Nominatiivne lause: {{ morphologyResult.nominative_text }}</p>
     </div>
 
     <div class="morph-table-wrap">
@@ -153,6 +200,7 @@
             <th>Sõna</th>
             <th>Kääne</th>
             <th>Nominatiiv</th>
+            <th>Valitud käände vorm</th>
           </tr>
         </thead>
         <tbody>
@@ -160,6 +208,7 @@
             <td>{{ row.token }}</td>
             <td>{{ formatCaseLabel(row.case) }}</td>
             <td>{{ row.nominative }}</td>
+            <td>{{ row.target_case_value || '-' }}</td>
           </tr>
         </tbody>
       </table>

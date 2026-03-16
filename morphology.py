@@ -20,6 +20,22 @@ _FORM_TO_CASE = {
     "kom": "Com", # Ilmaütlev (Kelleta? Milleta?)
     "ab": "Abe", # Kaasaütlev (Kellega? Millega?)
 }
+_CASE_TO_FORM = {
+    "Nom": "sg n",
+    "Gen": "sg g",
+    "Par": "sg p",
+    "Ill": "sg ill",
+    "Ine": "sg in",
+    "Ela": "sg el",
+    "All": "sg all",
+    "Ade": "sg ad",
+    "Abl": "sg abl",
+    "Tra": "sg tr",
+    "Ter": "sg ter",
+    "Ess": "sg es",
+    "Com": "sg kom",
+    "Abe": "sg ab",
+}
 
 
 def _case_from_form(form):
@@ -102,6 +118,38 @@ def analyze_morphology(text):
     return analyses
 
 
+def _extract_case_code_from_feats(feats):
+    if not feats or "Case=" not in feats:
+        return ""
+    for part in feats.split("|"):
+        if part.startswith("Case="):
+            return part.split("=", 1)[1]
+    return ""
+
+
+def _synthesize_last_token_only(text, target_form):
+    """
+    Apply morphology only to the last token of a multi-word string.
+    """
+    if not text or not target_form:
+        return ""
+
+    parts = [p for p in str(text).split() if p]
+    if not parts:
+        return ""
+
+    if len(parts) == 1:
+        candidates = synthesize_with_vabamorf(parts[0], target_form) or []
+        return candidates[0] if candidates else ""
+
+    prefix = " ".join(parts[:-1])
+    last = parts[-1]
+    candidates = synthesize_with_vabamorf(last, target_form) or []
+    if not candidates:
+        return ""
+    return f"{prefix} {candidates[0]}"
+
+
 def to_nominative(text):
     """
     Best-effort conversion of a name to nominative using EstNLTK morphology.
@@ -162,7 +210,7 @@ def to_nominative(text):
     return " ".join(result_tokens)
 
 
-def analyze_text_morphology(text):
+def analyze_text_morphology(text, target_case=None, combine_words=False):
     """
     Return per-token morphology info:
     - token: original surface form
@@ -171,6 +219,29 @@ def analyze_text_morphology(text):
     """
     if not text:
         return []
+
+    if combine_words:
+        nominative_text = to_nominative(text)
+        cases = []
+        for item in analyze_morphology(text):
+            case_code = _extract_case_code_from_feats(item.get("feats", ""))
+            if case_code:
+                cases.append(case_code)
+        unified_case = cases[0] if cases and len(set(cases)) == 1 else ""
+        target_value = ""
+        if target_case:
+            target_form = _CASE_TO_FORM.get(target_case)
+            if target_form:
+                target_value = _synthesize_last_token_only(nominative_text or text, target_form)
+                if not target_value:
+                    target_value = _synthesize_last_token_only(text, target_form)
+
+        return [{
+            "token": text,
+            "case": unified_case,
+            "nominative": nominative_text or text,
+            "target_case_value": target_value
+        }]
 
     if Text is None:
         raise ImportError("estnltk is required for morphology analysis")
@@ -214,8 +285,16 @@ def analyze_text_morphology(text):
         results.append({
             "token": word.text,
             "case": case or "",
-            "nominative": lemma or word.text
+            "nominative": lemma or word.text,
+            "target_case_value": ""
         })
+
+        if target_case:
+            target_form = _CASE_TO_FORM.get(target_case)
+            if target_form:
+                synthesized_value = _synthesize_last_token_only(lemma or word.text, target_form)
+                if synthesized_value:
+                    results[-1]["target_case_value"] = synthesized_value
 
     return results
 

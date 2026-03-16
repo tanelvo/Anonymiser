@@ -30,7 +30,6 @@ address_pattern = re.compile(
     r'\b(?:'
     r'(?:[A-ZÄÖÜÕ][a-zäöüõ]+(?:\s+[A-ZÄÖÜÕ][a-zäöüõ]+)*)\s+'
     r'(?:tn|tänav|tee|puiestee|pst|maantee|mnt|väljak|plats|allee|põik)\.?\s+\d{1,3}[A-Za-z]?'
-    r'|(?:[A-ZÄÖÜÕ][a-zäöüõ]+(?:\s+[A-ZÄÖÜÕ][a-zäöüõ]+)*)\s+\d{1,3}[A-Za-z]?(?:,\s*[A-ZÄÖÜÕ][a-zäöüõ]+(?:\s+[A-ZÄÖÜÕ][a-zäöüõ]+)*)'
     r')\b'
 )
 
@@ -85,6 +84,7 @@ def process_document(text):
     result = {
         "text": text,
         "person": [],
+        "known_persons": [],
         "organisation": [],
         "location": [],
         "phone_numbers": phone_numbers,
@@ -124,22 +124,22 @@ def process_document(text):
     result['email_addresses'] = merge_duplicates(result['email_addresses'])
     result['dates'] = []
     result['addresses'] = merge_duplicates(result['addresses'])
-    result['person'] = set_longest_match_from_slots(
-        remove_smaller_slots(result['person']),
-        text
-    )
+    result['person'] = remove_smaller_slots(result['person'])
     result['person'] = merge_adjacent_person_names(result['person'], text)
     result['person'] = strip_formal_titles_from_person_matches(result['person'], text)
     result['person'] = normalize_person_matches(result['person'])
     result['person'] = merge_similar_full_name_variants(result['person'])
     result['person'] = merge_single_token_person_mentions(result['person'])
-    result['person'] = filter_known_persons(result['person'])
+    result['person'] = merge_surname_only_mentions(result['person'])
+    result['person'] = prune_nested_person_slots(result['person'])
+    result['person'], result['known_persons'] = filter_known_persons(result['person'])
     result = resolve_cross_category_overlaps(result, text)
 
-    keys = ['person', 'organisation', 'location', 'phone_numbers', 'email_addresses', 'id_numbers', 'addresses']
+    keys = ['person', 'known_persons', 'organisation', 'location', 'phone_numbers', 'email_addresses', 'id_numbers', 'addresses']
     result['count'] = sum(len(result[key]) for key in keys)
     print("========================================")
     print(f"[matches] person={result['person']}")
+    print(f"[matches] known_persons={result['known_persons']}")
     print(f"[matches] organisation={result['organisation']}")
     print(f"[matches] location={result['location']}")
     print(f"[matches] phone_numbers={result['phone_numbers']}")
@@ -289,15 +289,46 @@ def are_likely_same_full_name(name_a, name_b):
 def choose_preferred_full_name(name_a, name_b):
     """
     Pick the better display form when two full names are merged.
-    Prefer surnames ending with a consonant (often nominative).
+    Prefer nominative-like surname variants over inflected ones.
     """
+    case_suffixes = {
+        "i", "ile", "ilt", "ist", "iga", "iks",
+        "lt", "st", "ga", "na", "ni", "ta", "l", "s",
+        "le", "ks", "st", "ga", "na", "ni", "ta",
+        "sse", "st", "ga", "ni", "ks"
+    }
+
+    def split_name(name):
+        parts = [p for p in name.split() if p]
+        if len(parts) < 2:
+            return "", ""
+        return " ".join(parts[:-1]), parts[-1]
+
+    def is_suffix_variant(base, candidate):
+        base_l = base.lower()
+        cand_l = candidate.lower()
+        if not cand_l.startswith(base_l):
+            return False
+        rest = cand_l[len(base_l):]
+        return rest in case_suffixes
+
+    first_a, sur_a = split_name(name_a)
+    first_b, sur_b = split_name(name_b)
+    if first_a and first_b and first_a.lower() == first_b.lower():
+        # If one surname is base and the other is base+case suffix, prefer base.
+        if is_suffix_variant(sur_a, sur_b):
+            return name_a
+        if is_suffix_variant(sur_b, sur_a):
+            return name_b
+
     def score(name):
         parts = [p for p in name.split() if p]
         if len(parts) < 2:
             return (0, len(name))
         surname = parts[-1]
         ends_consonant = surname[-1].lower() not in "aeiouõäöü"
-        return (1 if ends_consonant else 0, len(name))
+        # Prefer shorter when both look equally plausible.
+        return (1 if ends_consonant else 0, -len(name))
 
     return name_a if score(name_a) >= score(name_b) else name_b
 
@@ -350,11 +381,12 @@ def filter_known_persons(person_array):
     Only checks names with at least two tokens (first + last).
     """
     if not person_array:
-        return person_array
+        return person_array, []
 
     known_slots = []
     known_single_tokens = set()
     filtered = []
+    known_matches = []
     print("========================================")
     for match in person_array:
         name = (match.get("match") or "").strip()
@@ -364,6 +396,7 @@ def filter_known_persons(person_array):
             known_slots.extend(match.get("slots", []))
             for token in name.split():
                 known_single_tokens.add(token.lower())
+            known_matches.append(match)
         else:
             filtered.append(match)
 
@@ -373,7 +406,7 @@ def filter_known_persons(person_array):
             name = (match.get("match") or "").strip()
             if name and len(name.split()) < 2:
                 filtered.append(match)
-        return filtered
+        return filtered, []
 
     def overlaps(slot1, slot2):
         return not (slot1[1] <= slot2[0] or slot2[1] <= slot1[0])
@@ -408,7 +441,7 @@ def filter_known_persons(person_array):
             continue
         filtered.append(match)
 
-    return filtered
+    return filtered, known_matches
 
 
 def is_known_person(name):
@@ -756,6 +789,18 @@ def find_all_matches(entity_list, text, entity_type=None):
             word_obj['slots'].append(match_span)
             seen_slots.add(match_span)
 
+    def extend_person_suffix_span(span):
+        """
+        Extend fuzzy person spans to include trailing inflection suffix letters,
+        e.g. "Kaljulaid" -> "Kaljulaidu".
+        """
+        if entity_type != "person":
+            return span
+        start, end = span
+        while end < len(text) and re.match(r"[A-Za-zÄÖÜÕäöüõŠŽšž]", text[end]):
+            end += 1
+        return (start, end)
+
     seen_slots = set()  # Track already added slots to avoid duplicates
 
     if isinstance(entity_list, list):
@@ -768,7 +813,7 @@ def find_all_matches(entity_list, text, entity_type=None):
             fuzzy_matches = find_near_matches(word, text, max_l_dist=1)
             if fuzzy_matches:
                 for match in fuzzy_matches:
-                    span = (match.start, match.end)
+                    span = extend_person_suffix_span((match.start, match.end))
                     add_match(word_obj, span)
             else:
                 no_match_array.append(word)
@@ -827,7 +872,7 @@ def find_all_matches(entity_list, text, entity_type=None):
                     fuzzy_matches = find_near_matches(word, text, max_l_dist=1)
                     if fuzzy_matches:
                         for match in fuzzy_matches:
-                            span = (match.start, match.end)
+                            span = extend_person_suffix_span((match.start, match.end))
                             add_match(word_obj, span)
             if not word_obj['slots']:
                 no_match_array.append(main_word)
@@ -1014,25 +1059,6 @@ def remove_smaller_slots(person_array):
 
     return person_array
 
-def set_longest_match_from_slots(person_array, text):
-    """
-    For each element in the person_array, find the longest substring based on the slots 
-    and set it as the match.
-    """
-    for person in person_array:
-        longest_match = ""
-        for slot in person['slots']:
-            # Extract substring from the text based on the slot
-            substring = text[slot[0]:slot[1]]
-            # Keep the longest substring
-            if len(substring) > len(longest_match):
-                longest_match = substring
-        # Set the longest substring as the match
-        person['match'] = longest_match
-    
-    return person_array
-
-
 def resolve_cross_category_overlaps(result, text):
     """
     Ensure one text span appears in only one category.
@@ -1045,6 +1071,7 @@ def resolve_cross_category_overlaps(result, text):
         "phone_numbers",
         "addresses",
         "person",
+        "known_persons",
         "organisation",
         "location",
     ]
@@ -1125,6 +1152,137 @@ def merge_single_token_person_mentions(person_array):
     return merged_full + kept_singles
 
 
+def merge_surname_only_mentions(person_array):
+    """
+    Attach single-token surname mentions (incl. inflected forms) to a full-name entry
+    when the mapping is unambiguous.
+    Example: "Kalgrega" -> "Marko Kalgre".
+    """
+    if not person_array:
+        return person_array
+
+    full_names = [p for p in person_array if len((p.get("match") or "").split()) >= 2]
+    single_names = [p for p in person_array if len((p.get("match") or "").split()) == 1]
+
+    if not full_names or not single_names:
+        return person_array
+
+    merged_full = [
+        {"match": p.get("match", ""), "slots": list(p.get("slots", []))}
+        for p in full_names
+    ]
+
+    surname_to_full_indices = defaultdict(list)
+    for idx, person in enumerate(full_names):
+        surname = (person.get("match") or "").split()[-1]
+        for variant in generate_surname_variants(surname):
+            surname_to_full_indices[variant].append(idx)
+
+    kept_singles = []
+    for single in single_names:
+        token = (single.get("match") or "").strip()
+        key = normalize_name_key(token)
+        if not key:
+            kept_singles.append(single)
+            continue
+
+        candidates = surname_to_full_indices.get(key, [])
+        if len(candidates) == 1:
+            target_idx = candidates[0]
+            target_slots = merged_full[target_idx].get("slots", [])
+            for slot in single.get("slots", []):
+                # Skip if this single-token slot is already contained by an existing full-name slot.
+                if any(slot[0] >= t[0] and slot[1] <= t[1] for t in target_slots):
+                    continue
+                merged_full[target_idx]["slots"].append(slot)
+        else:
+            kept_singles.append(single)
+
+    for person in merged_full:
+        person["slots"] = list(dict.fromkeys(person.get("slots", [])))
+
+    return merged_full + kept_singles
+
+
+def prune_nested_person_slots(person_array):
+    """
+    Remove slots that are fully contained inside another slot of the same person.
+    Example: keep (54,66), drop nested (60,66).
+    """
+    if not person_array:
+        return person_array
+
+    pruned = []
+    for person in person_array:
+        slots = list(dict.fromkeys(person.get("slots", [])))
+        if len(slots) <= 1:
+            pruned.append(person)
+            continue
+
+        kept = []
+        for slot in slots:
+            is_nested = False
+            for other in slots:
+                if slot == other:
+                    continue
+                if slot[0] >= other[0] and slot[1] <= other[1]:
+                    is_nested = True
+                    break
+            if not is_nested:
+                kept.append(slot)
+
+        pruned.append({
+            "match": person.get("match", ""),
+            "slots": kept or slots
+        })
+
+    return pruned
+
+
+def generate_surname_variants(surname):
+    """
+    Build a normalized set of likely case variants for a surname.
+    """
+    forms = {"sg n", "sg g", "sg p", "sg ill", "sg in", "sg el", "sg all", "sg ad", "sg abl", "sg tr", "sg ter", "sg es", "sg kom", "sg ab"}
+    variants = set()
+    if not surname:
+        return variants
+
+    base = normalize_name_key(surname)
+    if base:
+        variants.add(base)
+
+    try:
+        nom = normalize_name_key(to_nominative(surname) or surname)
+        if nom:
+            variants.add(nom)
+    except Exception:
+        pass
+
+    for lemma in list(variants):
+        for form in forms:
+            try:
+                generated = synthesize_with_vabamorf(lemma, form) or []
+            except Exception:
+                generated = []
+            for item in generated:
+                norm = normalize_name_key(str(item))
+                if norm:
+                    variants.add(norm)
+
+    return variants
+
+
+def normalize_name_key(name):
+    if not name:
+        return ""
+    try:
+        normalized = (to_nominative(name) or name).strip().lower()
+    except Exception:
+        normalized = name.strip().lower()
+    return re.sub(r"\s+", " ", normalized)
+
+
 def strip_formal_titles_from_person_matches(person_array, text):
     """
     Remove formal title prefixes (e.g. "Härra", "Proua") from person matches.
@@ -1170,7 +1328,14 @@ def strip_formal_titles_from_person_matches(person_array, text):
             "slots": deduped_slots
         })
 
-    return set_longest_match_from_slots(cleaned, text)
+    for person in cleaned:
+        slots = person.get("slots", [])
+        if not slots:
+            continue
+        first_start, first_end = slots[0]
+        person["match"] = text[first_start:first_end]
+
+    return cleaned
 
 def process_chunk(chunk):
     """

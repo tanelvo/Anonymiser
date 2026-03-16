@@ -68,9 +68,13 @@ def anonymize():
 def morphology_process():
     data = request.json or {}
     text = data.get('text', '')
-    rows = analyze_text_morphology(text)
+    target_case = data.get('target_case', '')
+    combine_words = bool(data.get('combine_words', False))
+    rows = analyze_text_morphology(text, target_case=target_case, combine_words=combine_words)
     response = {
         "text": text,
+        "target_case": target_case,
+        "combine_words": combine_words,
         "nominative_text": to_nominative(text) if text else "",
         "tokens": rows
     }

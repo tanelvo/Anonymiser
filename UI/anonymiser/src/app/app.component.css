@@ -37,6 +37,7 @@ p {
 .result-shell {
   width: min(1240px, 100%);
   margin: 0 auto;
+  position: relative;
 }
 
 .top-nav {
@@ -123,7 +124,8 @@ input[type="text"]:focus {
 
 .text-panel,
 .control-panel,
-.result-card {
+.result-card,
+.edit-card {
   padding: 16px;
 }
 
@@ -142,16 +144,32 @@ input[type="text"]:focus {
 .inline-chip {
   border: 0;
   font: inherit;
+  display: inline-block;
   padding: 0 3px;
+  max-height: 1.45em;
   border-radius: 6px;
   background: var(--chip-color, #e9ecef);
   cursor: pointer;
+  vertical-align: baseline;
   transition: transform 130ms ease, box-shadow 130ms ease, background-color 130ms ease;
 }
 
 .inline-chip.active {
   background: var(--chip-selected, #d5f5f1);
   box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.08);
+}
+
+.inline-chip.known-wiki {
+  background: transparent;
+  border-radius: 0;
+  box-shadow: none;
+  border-bottom: 1px solid #9ca3af;
+  padding: 0;
+}
+
+.inline-chip.known-wiki.active {
+  background: #eef1f4;
+  border-bottom-color: #6b7280;
 }
 
 .inline-chip:hover {
@@ -303,14 +321,54 @@ label.ghost:hover {
   margin-top: 14px;
 }
 
-.result-card {
-  margin-top: 22px;
+.empty-state {
+  border: 1px dashed #cfd9cf;
+  border-radius: 10px;
+  padding: 12px;
+  color: var(--muted);
+  background: #f8fbf7;
 }
 
-.result-card .panel-header {
+.loading-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  background: rgba(250, 253, 249, 0.72);
+  backdrop-filter: blur(1px);
   display: flex;
-  justify-content: space-between;
+  flex-direction: column;
   align-items: center;
+  justify-content: center;
+  gap: 10px;
+  border-radius: 16px;
+}
+
+.spinner {
+  width: 36px;
+  height: 36px;
+  border: 3px solid #d7e7e0;
+  border-top-color: var(--primary);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+.loading-overlay p {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.secondary-actions {
+  margin-top: 12px;
+}
+
+.edit-card {
+  margin-top: 18px;
 }
 
 .active-nav {
@@ -321,6 +379,16 @@ label.ghost:hover {
 .morph-actions {
   display: flex;
   gap: 8px;
+}
+
+.morph-target-row {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.morph-combine-row {
+  margin-bottom: 10px;
 }
 
 .morph-result {
