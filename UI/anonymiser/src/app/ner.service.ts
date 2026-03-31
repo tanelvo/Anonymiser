@@ -25,7 +25,7 @@ export class NERService {
 
   constructor(protected httpClient: HttpClient) { }
 
-  BASE_URL = 'https://andy-residence-penalty-directory.trycloudflare.com';
+  BASE_URL = 'https://simpson-iowa-vienna-cell.trycloudflare.com';
 
   getNamedEntities(text: string): Observable<Highligtables> {
     const body = {text};
